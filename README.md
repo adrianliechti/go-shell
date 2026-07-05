@@ -37,6 +37,13 @@ func main() {
 `shell.Run` must be called from the main goroutine (the native event loop
 runs on the main thread) and blocks until the window closes.
 
+With `Handler`, the loopback listener is guarded by a per-run random token:
+the window's first navigation exchanges it for an HttpOnly, SameSite=Strict
+session cookie, and requests without it are rejected with 401. Other local
+processes and web pages in browsers (CSRF, DNS rebinding) cannot reach the
+handler — but this also means the app's URL is not usable in an outside
+browser. With `URL`, protecting the server is the caller's responsibility.
+
 ## Packaging
 
 An app ships a single `appicon.png` (square, ideally 1024x1024) next to its

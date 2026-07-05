@@ -16,6 +16,9 @@
 package shell
 
 import (
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -80,13 +83,73 @@ func Run(opts Options) error {
 
 		defer ln.Close()
 
-		go http.Serve(ln, opts.Handler)
+		// The loopback port is reachable by every process on the machine and,
+		// via CSRF or DNS rebinding, by web pages in local browsers — and the
+		// handler may expose privileged APIs. Only this window knows the
+		// per-run token; the first navigation exchanges it for a session
+		// cookie, everything else is rejected.
+		secret, err := token()
 
-		opts.URL = fmt.Sprintf("http://127.0.0.1:%d", ln.Addr().(*net.TCPAddr).Port)
+		if err != nil {
+			return err
+		}
+
+		go http.Serve(ln, protect(secret, opts.Handler))
+
+		opts.URL = fmt.Sprintf("http://127.0.0.1:%d/?shell_token=%s", ln.Addr().(*net.TCPAddr).Port, secret)
 
 	case opts.URL == "":
 		return errors.New("shell: URL or Handler is required")
 	}
 
 	return run(opts)
+}
+
+func token() (string, error) {
+	b := make([]byte, 32)
+
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+
+	return hex.EncodeToString(b), nil
+}
+
+// protect only lets requests through that carry the session cookie. A request
+// presenting the token (the window's initial navigation) is redirected to the
+// same URL without it — so it never lingers in the address bar or history —
+// with the cookie set. HttpOnly keeps it from scripts; SameSite=Strict keeps
+// browsers from attaching it to cross-site requests.
+func protect(secret string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if cookie, err := r.Cookie("shell_session"); err == nil && equal(cookie.Value, secret) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		if query := r.URL.Query(); equal(query.Get("shell_token"), secret) {
+			http.SetCookie(w, &http.Cookie{
+				Name:  "shell_session",
+				Value: secret,
+
+				Path:     "/",
+				HttpOnly: true,
+				SameSite: http.SameSiteStrictMode,
+			})
+
+			query.Del("shell_token")
+
+			target := *r.URL
+			target.RawQuery = query.Encode()
+
+			http.Redirect(w, r, target.String(), http.StatusSeeOther)
+			return
+		}
+
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	})
+}
+
+func equal(a, b string) bool {
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
