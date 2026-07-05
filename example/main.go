@@ -56,6 +56,18 @@ func main() {
 		json.NewEncoder(w).Encode(files)
 	})
 
+	mux.HandleFunc("POST /api/folder", func(w http.ResponseWriter, r *http.Request) {
+		path, err := shell.PickFolder("Choose a folder")
+
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"path": path})
+	})
+
 	err := shell.Run(shell.Options{
 		Title:   "Shell Example",
 		Handler: mux,
@@ -124,6 +136,12 @@ const page = `<!doctype html>
 </section>
 
 <section>
+  <h2>Native folder picker</h2>
+  <button onclick="pickFolder()">shell.PickFolder()</button>
+  <output id="folderOut">The backend opens the dialog and receives the path.</output>
+</section>
+
+<section>
   <h2>Downloads</h2>
   <button onclick="location.href='/download.csv'">Server download (Content-Disposition)</button>
   <button onclick="blobDownload()">Client download (blob + download attribute)</button>
@@ -153,6 +171,12 @@ const page = `<!doctype html>
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
+  }
+
+  async function pickFolder() {
+    const response = await fetch('/api/folder', { method: 'POST' });
+    const result = await response.json();
+    folderOut.value = result.path ? 'picked: ' + result.path : 'cancelled';
   }
 
   async function fetchTime() {

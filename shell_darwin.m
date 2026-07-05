@@ -1,6 +1,11 @@
 #import <Cocoa/Cocoa.h>
 #import <WebKit/WebKit.h>
 
+#include <stdint.h>
+#include <string.h>
+
+extern void shellFolderPicked(char *path, uintptr_t ctx);
+
 @interface ShellApp : NSObject <NSApplicationDelegate, WKUIDelegate, WKNavigationDelegate, WKDownloadDelegate>
 
 @property(strong) NSWindow *window;
@@ -319,6 +324,39 @@ static void BuildMenu(ShellApp *delegate) {
 
     NSApp.mainMenu = menubar;
     NSApp.windowsMenu = windowMenu;
+}
+
+void ShellPickFolder(const char *title, uintptr_t ctx) {
+    NSString *message = title ? [NSString stringWithUTF8String:title] : nil;
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSOpenPanel *panel = [NSOpenPanel openPanel];
+        panel.canChooseFiles = NO;
+        panel.canChooseDirectories = YES;
+        panel.canCreateDirectories = YES;
+        panel.allowsMultipleSelection = NO;
+
+        if (message.length > 0) {
+            panel.message = message;
+        }
+
+        void (^finish)(NSModalResponse) = ^(NSModalResponse response) {
+            NSURL *url = response == NSModalResponseOK ? panel.URLs.firstObject : nil;
+            shellFolderPicked(url ? strdup(url.path.fileSystemRepresentation) : NULL, ctx);
+        };
+
+        NSWindow *window = nil;
+
+        if ([NSApp.delegate isKindOfClass:[ShellApp class]]) {
+            window = ((ShellApp *)NSApp.delegate).window;
+        }
+
+        if (window != nil) {
+            [panel beginSheetModalForWindow:window completionHandler:finish];
+        } else {
+            finish([panel runModal]);
+        }
+    });
 }
 
 void ShellRun(const char *url, const char *title, int width, int height, int minWidth, int minHeight, int debug) {

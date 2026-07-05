@@ -24,6 +24,7 @@ import (
 	"net"
 	"net/http"
 	"runtime"
+	"sync/atomic"
 )
 
 func init() {
@@ -108,7 +109,11 @@ func Run(opts Options) error {
 		return errors.New("shell: URL or Handler is required")
 	}
 
-	if err := run(opts); err != nil {
+	running.Store(true)
+	err := run(opts)
+	running.Store(false)
+
+	if err != nil {
 		return err
 	}
 
@@ -123,6 +128,21 @@ func Run(opts Options) error {
 	}
 
 	return nil
+}
+
+var running atomic.Bool
+
+// PickFolder opens the native directory picker on the shell window and
+// returns the chosen path, or "" if the user cancels. It must be called
+// while Run is active and never from the main goroutine (which is busy
+// running the event loop) — an HTTP handler of the hosted app is the
+// natural place.
+func PickFolder(title string) (string, error) {
+	if !running.Load() {
+		return "", errors.New("shell: window is not running")
+	}
+
+	return pickFolder(title)
 }
 
 func token() (string, error) {

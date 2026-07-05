@@ -46,6 +46,14 @@ anchors), page zoom, reload, and a menu bar / dark-mode aware chrome. Try it:
 cd example && task run
 ```
 
+The one native call the browser cannot make itself — choosing a *directory*
+and learning its path — is exposed as a plain function the backend can call
+from a request handler (never from the main goroutine):
+
+```go
+path, err := shell.PickFolder("Open Workspace") // "" if cancelled
+```
+
 With `Handler`, the loopback listener is guarded by a per-run random token:
 the window's first navigation exchanges it for an HttpOnly, SameSite=Strict
 session cookie, and requests without it are rejected with 401. Other local

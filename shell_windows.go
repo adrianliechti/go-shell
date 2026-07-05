@@ -17,14 +17,14 @@ import (
 )
 
 var (
-	user32                  = syscall.NewLazyDLL("user32.dll")
-	procMessageBoxW         = user32.NewProc("MessageBoxW")
-	procGetDpiForSystem     = user32.NewProc("GetDpiForSystem")
-	procGetWindowPlacement  = user32.NewProc("GetWindowPlacement")
-	procSetWindowPlacement  = user32.NewProc("SetWindowPlacement")
-	procMonitorFromRect     = user32.NewProc("MonitorFromRect")
-	dwmapi                  = syscall.NewLazyDLL("dwmapi.dll")
-	procSetWindowAttribute  = dwmapi.NewProc("DwmSetWindowAttribute")
+	user32                 = syscall.NewLazyDLL("user32.dll")
+	procMessageBoxW        = user32.NewProc("MessageBoxW")
+	procGetDpiForSystem    = user32.NewProc("GetDpiForSystem")
+	procGetWindowPlacement = user32.NewProc("GetWindowPlacement")
+	procSetWindowPlacement = user32.NewProc("SetWindowPlacement")
+	procMonitorFromRect    = user32.NewProc("MonitorFromRect")
+	dwmapi                 = syscall.NewLazyDLL("dwmapi.dll")
+	procSetWindowAttribute = dwmapi.NewProc("DwmSetWindowAttribute")
 )
 
 const (
@@ -37,6 +37,11 @@ const (
 )
 
 var errNoWebView2 = errors.New("failed to create a WebView2 window (is the WebView2 runtime installed?)")
+
+var (
+	viewMu sync.Mutex
+	view   webview2.WebView
+)
 
 func run(opts Options) error {
 	dataPath := ""
@@ -102,7 +107,15 @@ func run(opts Options) error {
 
 	stop := trackPlacement(hwnd)
 
+	viewMu.Lock()
+	view = w
+	viewMu.Unlock()
+
 	w.Run()
+
+	viewMu.Lock()
+	view = nil
+	viewMu.Unlock()
 
 	if p := stop(); p != nil && placementPath != "" {
 		savePlacement(placementPath, p)
