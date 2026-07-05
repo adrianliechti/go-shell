@@ -39,22 +39,22 @@ runs on the main thread) and blocks until the window closes.
 
 ## Packaging tools
 
-Both are meant to be pinned as [tool dependencies](https://go.dev/doc/modules/managing-dependencies#tools):
+An app ships a single `appicon.png` (square, ideally 1024x1024); everything
+platform-specific is generated from it. Both tools are meant to be pinned as
+[tool dependencies](https://go.dev/doc/modules/managing-dependencies#tools):
 
 ```
 tool (
 	github.com/adrianliechti/go-shell/cmd/appbundle
-	github.com/adrianliechti/go-shell/cmd/icns
+	github.com/adrianliechti/go-shell/cmd/winres
 )
 ```
 
-- `go tool icns -in appicon.png -out icon.icns` — renders an Apple `.icns`
-  from a single square PNG (ideally 1024x1024), replacing the sips/iconutil
-  pipeline.
-- `go tool appbundle -name App -package ./app -version 1.2.3` — compiles the
-  main package and assembles `App.app` (binary, Info.plist template with
-  `__VERSION__` stamped, `icon.icns`, ad-hoc code signature).
-
-On Windows, embed the icon and manifest as `.syso` resources instead, e.g.
-with [go-winres](https://github.com/tc-hib/go-winres); the window picks up
-`RT_GROUP_ICON` `#1`.
+- `go tool winres -name App -description "..." -company "..." -in appicon.png`
+  — generates the Windows resource objects (`rsrc_windows_*.syso`: icon,
+  per-monitor-v2 DPI manifest, version info). Generate and commit them via a
+  `go:generate` directive next to the main package; `go build` links them in
+  and the window picks up the icon (`RT_GROUP_ICON` `#1`).
+- `go tool appbundle -name App -id com.example.app -package ./app -version 1.2.3`
+  — compiles the main package and assembles `App.app`: binary, generated
+  Info.plist, `icon.icns` rendered from `appicon.png`, ad-hoc code signature.

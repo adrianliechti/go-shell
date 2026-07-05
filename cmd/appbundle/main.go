@@ -1,50 +1,48 @@
 // Command appbundle compiles a Go desktop app and assembles a macOS .app
-// bundle: Go binary, Info.plist with the version stamped in (every
-// __VERSION__ placeholder is replaced), the app icon, and an ad-hoc code
-// signature (required on Apple Silicon).
+// bundle: Go binary, generated Info.plist, icon.icns rendered from the app's
+// source PNG, and an ad-hoc code signature (required on Apple Silicon).
 //
-// The Info.plist template and icon.icns live next to the main package and
-// are picked up from there by default. Run from the module root:
+// Run from the module root:
 //
-//	go tool appbundle -name Bridge -package ./app -version 1.2.3
+//	go tool appbundle -name Bridge -id com.example.bridge -package ./app -version 1.2.3
 package main
 
 import (
-	"bytes"
 	"flag"
+	"fmt"
+	"image/png"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+
+	"github.com/adrianliechti/go-shell/internal/icns"
 )
 
 func main() {
 	name := flag.String("name", "", "app name (required, names the .app and its binary)")
+	id := flag.String("id", "", "bundle identifier (required, e.g. com.example.app)")
 	pkg := flag.String("package", ".", "directory of the Go main package to build")
 	version := flag.String("version", "0.0.0", "bundle version")
-	icon := flag.String("icon", "", "app icon (default <package>/icon.icns)")
-	plist := flag.String("plist", "", "Info.plist template (default <package>/Info.plist)")
+	icon := flag.String("icon", "", "app icon png, ideally 1024x1024 (default <package>/appicon.png)")
+	copyright := flag.String("copyright", "", "human-readable copyright")
 	out := flag.String("out", "", "output directory (default <package>/build/bin)")
 	arch := flag.String("arch", "arm64", "target GOARCH")
-	minos := flag.String("minos", "12.0", "macOS deployment target; keep in sync with LSMinimumSystemVersion in the Info.plist")
+	minos := flag.String("minos", "12.0", "macOS deployment target")
 	flag.Parse()
 
 	if runtime.GOOS != "darwin" {
 		log.Fatal("appbundle assembles a macOS bundle and must run on macOS")
 	}
 
-	if *name == "" {
+	if *name == "" || *id == "" {
 		flag.Usage()
 		os.Exit(2)
 	}
 
 	if *icon == "" {
-		*icon = filepath.Join(*pkg, "icon.icns")
-	}
-
-	if *plist == "" {
-		*plist = filepath.Join(*pkg, "Info.plist")
+		*icon = filepath.Join(*pkg, "appicon.png")
 	}
 
 	if *out == "" {
@@ -85,31 +83,89 @@ func main() {
 	}
 	runEnv(buildEnv, "go", "build", "-trimpath", "-ldflags=-s -w", "-o", filepath.Join(contents, "MacOS", *name), "./"+filepath.ToSlash(filepath.Clean(*pkg)))
 
-	data, err := os.ReadFile(*plist)
-
-	if err != nil {
+	if err := os.WriteFile(filepath.Join(contents, "Info.plist"), plist(*name, *id, *version, *minos, *copyright), 0o644); err != nil {
 		log.Fatal(err)
 	}
 
-	data = bytes.ReplaceAll(data, []byte("__VERSION__"), []byte(*version))
-
-	if err := os.WriteFile(filepath.Join(contents, "Info.plist"), data, 0o644); err != nil {
-		log.Fatal(err)
-	}
-
-	icns, err := os.ReadFile(*icon)
-
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	if err := os.WriteFile(filepath.Join(contents, "Resources", "icon.icns"), icns, 0o644); err != nil {
+	if err := renderIcon(*icon, filepath.Join(contents, "Resources", "icon.icns")); err != nil {
 		log.Fatal(err)
 	}
 
 	run("codesign", "--force", "--sign", "-", app)
 
 	log.Printf("built %s", app)
+}
+
+func plist(name, id, version, minos, copyright string) []byte {
+	optional := ""
+
+	if copyright != "" {
+		optional = fmt.Sprintf(`        <key>NSHumanReadableCopyright</key>
+        <string>%s</string>
+`, copyright)
+	}
+
+	return fmt.Appendf(nil, `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+    <dict>
+        <key>CFBundlePackageType</key>
+        <string>APPL</string>
+        <key>CFBundleName</key>
+        <string>%[1]s</string>
+        <key>CFBundleDisplayName</key>
+        <string>%[1]s</string>
+        <key>CFBundleExecutable</key>
+        <string>%[1]s</string>
+        <key>CFBundleIdentifier</key>
+        <string>%[2]s</string>
+        <key>CFBundleVersion</key>
+        <string>%[3]s</string>
+        <key>CFBundleShortVersionString</key>
+        <string>%[3]s</string>
+        <key>CFBundleIconFile</key>
+        <string>icon</string>
+        <key>LSMinimumSystemVersion</key>
+        <string>%[4]s</string>
+        <key>NSHighResolutionCapable</key>
+        <true/>
+%[5]s        <!-- The app loads its UI from the in-process server on 127.0.0.1. -->
+        <key>NSAppTransportSecurity</key>
+        <dict>
+            <key>NSAllowsLocalNetworking</key>
+            <true/>
+        </dict>
+    </dict>
+</plist>
+`, name, id, version, minos, optional)
+}
+
+func renderIcon(src, dst string) error {
+	f, err := os.Open(src)
+
+	if err != nil {
+		return err
+	}
+
+	img, err := png.Decode(f)
+	f.Close()
+
+	if err != nil {
+		return err
+	}
+
+	out, err := os.Create(dst)
+
+	if err != nil {
+		return err
+	}
+
+	if err := icns.Encode(out, img); err != nil {
+		out.Close()
+		return err
+	}
+
+	return out.Close()
 }
 
 func run(name string, args ...string) {

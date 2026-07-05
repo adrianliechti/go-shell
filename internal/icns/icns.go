@@ -1,17 +1,13 @@
-// Command icns renders an Apple .icns icon from a single square source PNG
+// Package icns renders an Apple .icns icon from a single square source image
 // (ideally 1024x1024), replacing the sips/iconutil pipeline.
-//
-//	go tool icns -in appicon.png -out icon.icns
-package main
+package icns
 
 import (
 	"bytes"
 	"encoding/binary"
-	"flag"
 	"image"
 	"image/png"
-	"log"
-	"os"
+	"io"
 
 	"golang.org/x/image/draw"
 )
@@ -34,28 +30,8 @@ var entries = []struct {
 	{"ic14", 512},  // 256x256@2x
 }
 
-func main() {
-	in := flag.String("in", "", "source png")
-	out := flag.String("out", "", "target icns")
-	flag.Parse()
-
-	if *in == "" || *out == "" {
-		flag.Usage()
-		os.Exit(2)
-	}
-
-	data, err := os.ReadFile(*in)
-
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	src, err := png.Decode(bytes.NewReader(data))
-
-	if err != nil {
-		log.Fatal(err)
-	}
-
+// Encode writes src as an .icns file with all standard icon sizes.
+func Encode(w io.Writer, src image.Image) error {
 	rendered := map[int][]byte{}
 
 	var body bytes.Buffer
@@ -64,7 +40,12 @@ func main() {
 		img, ok := rendered[entry.size]
 
 		if !ok {
-			img = render(src, entry.size)
+			var err error
+
+			if img, err = render(src, entry.size); err != nil {
+				return err
+			}
+
 			rendered[entry.size] = img
 		}
 
@@ -78,20 +59,19 @@ func main() {
 	binary.Write(&file, binary.BigEndian, uint32(8+body.Len()))
 	body.WriteTo(&file)
 
-	if err := os.WriteFile(*out, file.Bytes(), 0o644); err != nil {
-		log.Fatal(err)
-	}
+	_, err := w.Write(file.Bytes())
+	return err
 }
 
-func render(src image.Image, size int) []byte {
+func render(src image.Image, size int) ([]byte, error) {
 	dst := image.NewRGBA(image.Rect(0, 0, size, size))
 	draw.CatmullRom.Scale(dst, dst.Bounds(), src, src.Bounds(), draw.Src, nil)
 
 	var buf bytes.Buffer
 
 	if err := png.Encode(&buf, dst); err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 
-	return buf.Bytes()
+	return buf.Bytes(), nil
 }
