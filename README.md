@@ -37,24 +37,25 @@ func main() {
 `shell.Run` must be called from the main goroutine (the native event loop
 runs on the main thread) and blocks until the window closes.
 
-## Packaging tools
+## Packaging
 
-An app ships a single `appicon.png` (square, ideally 1024x1024); everything
-platform-specific is generated from it. Both tools are meant to be pinned as
-[tool dependencies](https://go.dev/doc/modules/managing-dependencies#tools):
+An app ships a single `appicon.png` (square, ideally 1024x1024) next to its
+main package; everything platform-specific is generated from it at build time
+by one tool, meant to be pinned as a
+[tool dependency](https://go.dev/doc/modules/managing-dependencies#tools):
 
 ```
-tool (
-	github.com/adrianliechti/go-shell/cmd/appbundle
-	github.com/adrianliechti/go-shell/cmd/winres
-)
+tool github.com/adrianliechti/go-shell/cmd/appbundle
 ```
 
-- `go tool winres -name App -description "..." -company "..." -in appicon.png`
-  — generates the Windows resource objects (`rsrc_windows_*.syso`: icon,
-  per-monitor-v2 DPI manifest, version info). Generate and commit them via a
-  `go:generate` directive next to the main package; `go build` links them in
-  and the window picks up the icon (`RT_GROUP_ICON` `#1`).
-- `go tool appbundle -name App -id com.example.app -package ./app -version 1.2.3`
-  — compiles the main package and assembles `App.app`: binary, generated
-  Info.plist, `icon.icns` rendered from `appicon.png`, ad-hoc code signature.
+```
+go tool appbundle -name App -id com.example.app -description "..." -company "..." -copyright "..." -package ./app -version 1.2.3
+```
+
+- On macOS it assembles `App.app`: binary, generated Info.plist, `icon.icns`
+  rendered from the PNG, ad-hoc code signature.
+- On Windows (or with `-os windows`) it builds `App.exe` (windowsgui): a
+  resource object — icon (`RT_GROUP_ICON` `#1`, used by the window),
+  per-monitor-v2 DPI manifest, version info — is generated next to the main
+  package for the duration of the build and removed afterwards. Note that a
+  plain `go build` without the tool yields an exe without icon or manifest.

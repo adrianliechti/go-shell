@@ -1,6 +1,13 @@
-// Command appbundle compiles a Go desktop app and assembles a macOS .app
-// bundle: Go binary, generated Info.plist, icon.icns rendered from the app's
-// source PNG, and an ad-hoc code signature (required on Apple Silicon).
+// Command appbundle compiles a Go desktop app and packages it for the target
+// platform, generating all platform resources from the app's single source
+// PNG (ideally 1024x1024):
+//
+//   - macOS: assembles <name>.app — Go binary, generated Info.plist,
+//     icon.icns rendered from the PNG, and an ad-hoc code signature
+//     (required on Apple Silicon). Must run on macOS.
+//   - Windows: builds <name>.exe (windowsgui) — a resource object (icon,
+//     per-monitor-v2 DPI manifest, version info) is generated next to the
+//     main package for the duration of the build and removed afterwards.
 //
 // Run from the module root:
 //
@@ -10,6 +17,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"image"
 	"image/png"
 	"log"
 	"os"
@@ -18,25 +26,25 @@ import (
 	"runtime"
 
 	"github.com/adrianliechti/go-shell/internal/icns"
+	"github.com/adrianliechti/go-shell/internal/winres"
 )
 
 func main() {
-	name := flag.String("name", "", "app name (required, names the .app and its binary)")
-	id := flag.String("id", "", "bundle identifier (required, e.g. com.example.app)")
+	name := flag.String("name", "", "app name (required, names the .app / .exe)")
+	id := flag.String("id", "", "bundle identifier, e.g. com.example.app (required on macOS)")
 	pkg := flag.String("package", ".", "directory of the Go main package to build")
 	version := flag.String("version", "0.0.0", "bundle version")
+	description := flag.String("description", "", "file description shown by Windows (default: the app name)")
+	company := flag.String("company", "", "company name shown by Windows")
+	copyright := flag.String("copyright", "", "human-readable copyright shown by macOS")
 	icon := flag.String("icon", "", "app icon png, ideally 1024x1024 (default <package>/appicon.png)")
-	copyright := flag.String("copyright", "", "human-readable copyright")
 	out := flag.String("out", "", "output directory (default <package>/build/bin)")
-	arch := flag.String("arch", "arm64", "target GOARCH")
+	goos := flag.String("os", runtime.GOOS, "target platform: darwin or windows")
+	arch := flag.String("arch", "", "target GOARCH (default: arm64 on darwin, the host arch on windows)")
 	minos := flag.String("minos", "12.0", "macOS deployment target")
 	flag.Parse()
 
-	if runtime.GOOS != "darwin" {
-		log.Fatal("appbundle assembles a macOS bundle and must run on macOS")
-	}
-
-	if *name == "" || *id == "" {
+	if *name == "" {
 		flag.Usage()
 		os.Exit(2)
 	}
@@ -49,7 +57,39 @@ func main() {
 		*out = filepath.Join(*pkg, "build", "bin")
 	}
 
-	app := filepath.Join(*out, *name+".app")
+	img := loadIcon(*icon)
+
+	switch *goos {
+	case "darwin":
+		if runtime.GOOS != "darwin" {
+			log.Fatal("the macOS bundle must be assembled on macOS (cgo/Cocoa, codesign)")
+		}
+
+		if *id == "" {
+			flag.Usage()
+			os.Exit(2)
+		}
+
+		if *arch == "" {
+			*arch = "arm64"
+		}
+
+		bundleDarwin(*name, *id, *pkg, *version, *copyright, *out, *arch, *minos, img)
+
+	case "windows":
+		if *arch == "" {
+			*arch = hostWindowsArch()
+		}
+
+		buildWindows(*name, *pkg, *description, *company, *out, *arch, img)
+
+	default:
+		log.Fatalf("unsupported target platform %q", *goos)
+	}
+}
+
+func bundleDarwin(name, id, pkg, version, copyright, out, arch, minos string, icon image.Image) {
+	app := filepath.Join(out, name+".app")
 	contents := filepath.Join(app, "Contents")
 
 	if err := os.RemoveAll(app); err != nil {
@@ -62,7 +102,7 @@ func main() {
 		}
 	}
 
-	log.Printf("compiling %s %s", *name, *version)
+	log.Printf("compiling %s %s", name, version)
 
 	// Pin the target OS/arch/deployment target explicitly: left to defaults,
 	// the binary's minos silently becomes the build host's OS version, and
@@ -77,23 +117,56 @@ func main() {
 	buildEnv := []string{
 		"CGO_ENABLED=1",
 		"GOOS=darwin",
-		"GOARCH=" + *arch,
-		"CGO_CFLAGS=-g -O2 -mmacosx-version-min=" + *minos,
-		"CGO_LDFLAGS=-g -O2 -mmacosx-version-min=" + *minos,
+		"GOARCH=" + arch,
+		"CGO_CFLAGS=-g -O2 -mmacosx-version-min=" + minos,
+		"CGO_LDFLAGS=-g -O2 -mmacosx-version-min=" + minos,
 	}
-	runEnv(buildEnv, "go", "build", "-trimpath", "-ldflags=-s -w", "-o", filepath.Join(contents, "MacOS", *name), "./"+filepath.ToSlash(filepath.Clean(*pkg)))
+	runEnv(buildEnv, "go", "build", "-trimpath", "-ldflags=-s -w", "-o", filepath.Join(contents, "MacOS", name), pkgPath(pkg))
 
-	if err := os.WriteFile(filepath.Join(contents, "Info.plist"), plist(*name, *id, *version, *minos, *copyright), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(contents, "Info.plist"), plist(name, id, version, minos, copyright), 0o644); err != nil {
 		log.Fatal(err)
 	}
 
-	if err := renderIcon(*icon, filepath.Join(contents, "Resources", "icon.icns")); err != nil {
+	if err := writeIcns(filepath.Join(contents, "Resources", "icon.icns"), icon); err != nil {
 		log.Fatal(err)
 	}
 
 	run("codesign", "--force", "--sign", "-", app)
 
 	log.Printf("built %s", app)
+}
+
+func buildWindows(name, pkg, description, company, out, arch string, icon image.Image) {
+	// The linker only picks up resource objects that sit in a package
+	// directory, so the .syso is generated next to the main package for the
+	// duration of the build.
+	syso := filepath.Join(pkg, "rsrc_windows_"+arch+".syso")
+
+	err := winres.Syso(syso, arch, winres.Options{
+		Name:        name,
+		Description: description,
+		Company:     company,
+
+		Icon: icon,
+	})
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	defer os.Remove(syso)
+
+	exe := filepath.Join(out, name+".exe")
+
+	log.Printf("compiling %s", name)
+
+	buildEnv := []string{
+		"GOOS=windows",
+		"GOARCH=" + arch,
+	}
+	runEnv(buildEnv, "go", "build", "-trimpath", "-ldflags=-s -w -H windowsgui", "-o", exe, pkgPath(pkg))
+
+	log.Printf("built %s", exe)
 }
 
 func plist(name, id, version, minos, copyright string) []byte {
@@ -140,32 +213,49 @@ func plist(name, id, version, minos, copyright string) []byte {
 `, name, id, version, minos, optional)
 }
 
-func renderIcon(src, dst string) error {
-	f, err := os.Open(src)
+func loadIcon(path string) image.Image {
+	f, err := os.Open(path)
 
 	if err != nil {
-		return err
+		log.Fatal(err)
 	}
+
+	defer f.Close()
 
 	img, err := png.Decode(f)
-	f.Close()
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return img
+}
+
+func writeIcns(path string, img image.Image) error {
+	f, err := os.Create(path)
 
 	if err != nil {
 		return err
 	}
 
-	out, err := os.Create(dst)
-
-	if err != nil {
+	if err := icns.Encode(f, img); err != nil {
+		f.Close()
 		return err
 	}
 
-	if err := icns.Encode(out, img); err != nil {
-		out.Close()
-		return err
+	return f.Close()
+}
+
+func hostWindowsArch() string {
+	if runtime.GOOS == "windows" {
+		return runtime.GOARCH
 	}
 
-	return out.Close()
+	return "amd64"
+}
+
+func pkgPath(pkg string) string {
+	return "./" + filepath.ToSlash(filepath.Clean(pkg))
 }
 
 func run(name string, args ...string) {
