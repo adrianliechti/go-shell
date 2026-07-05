@@ -154,8 +154,6 @@ func buildWindows(name, pkg, description, company, out, arch string, icon image.
 		log.Fatal(err)
 	}
 
-	defer os.Remove(syso)
-
 	exe := filepath.Join(out, name+".exe")
 
 	log.Printf("compiling %s", name)
@@ -164,7 +162,15 @@ func buildWindows(name, pkg, description, company, out, arch string, icon image.
 		"GOOS=windows",
 		"GOARCH=" + arch,
 	}
-	runEnv(buildEnv, "go", "build", "-trimpath", "-ldflags=-s -w -H windowsgui", "-o", exe, pkgPath(pkg))
+
+	// Remove the .syso even when the build fails (log.Fatal skips defers):
+	// a stray leftover would silently be linked into plain `go build` runs.
+	buildErr := runEnvErr(buildEnv, "go", "build", "-trimpath", "-ldflags=-s -w -H windowsgui", "-o", exe, pkgPath(pkg))
+	os.Remove(syso)
+
+	if buildErr != nil {
+		log.Fatal(buildErr)
+	}
 
 	log.Printf("built %s", exe)
 }
@@ -263,12 +269,16 @@ func run(name string, args ...string) {
 }
 
 func runEnv(env []string, name string, args ...string) {
+	if err := runEnvErr(env, name, args...); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func runEnvErr(env []string, name string, args ...string) error {
 	cmd := exec.Command(name, args...)
 	cmd.Env = append(os.Environ(), env...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	if err := cmd.Run(); err != nil {
-		log.Fatal(err)
-	}
+	return cmd.Run()
 }
