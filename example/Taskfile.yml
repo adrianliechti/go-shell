@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: '3'
+
+tasks:
+  run:
+    desc: Run the example app (dialogs, uploads, downloads, external links, zoom)
+    cmds:
+      - go run .
+
+  app:
+    desc: Package the example as a desktop app for this platform (build/bin)
+    cmds:
+      - go run ../cmd/appbundle -name ShellExample -id com.adrianliechti.shell-example -description "go-shell Example" -package .

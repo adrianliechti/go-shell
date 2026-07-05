@@ -1,11 +1,12 @@
 #import <Cocoa/Cocoa.h>
 #import <WebKit/WebKit.h>
 
-@interface ShellApp : NSObject <NSApplicationDelegate, WKUIDelegate, WKNavigationDelegate>
+@interface ShellApp : NSObject <NSApplicationDelegate, WKUIDelegate, WKNavigationDelegate, WKDownloadDelegate>
 
 @property(strong) NSWindow *window;
 @property(strong) WKWebView *webView;
 @property(strong) NSURL *baseURL;
+@property(strong) NSMapTable<WKDownload *, NSURL *> *downloads;
 
 @end
 
@@ -13,6 +14,27 @@
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender {
     return YES;
+}
+
+// Intercept quit (Cmd+Q, dock, last window closed) and stop the run loop
+// instead of terminating the process, so ShellRun — and with it the Go
+// shell.Run — returns and the app's deferred cleanup gets to run.
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
+    [NSApp stop:nil];
+
+    // stop: only takes effect once an event is processed — nudge the loop.
+    NSEvent *event = [NSEvent otherEventWithType:NSEventTypeApplicationDefined
+                                        location:NSZeroPoint
+                                   modifierFlags:0
+                                       timestamp:0
+                                    windowNumber:0
+                                         context:nil
+                                         subtype:0
+                                           data1:0
+                                           data2:0];
+    [NSApp postEvent:event atStart:YES];
+
+    return NSTerminateCancel;
 }
 
 - (BOOL)applicationSupportsSecureRestorableState:(NSApplication *)app {
@@ -24,6 +46,8 @@
            [url.host isEqualToString:self.baseURL.host] &&
            ((url.port == nil && self.baseURL.port == nil) || [url.port isEqualToNumber:self.baseURL.port]);
 }
+
+#pragma mark - Navigation
 
 // target="_blank" and window.open land here: open externals in the default
 // browser, keep same-origin targets in the app window (never spawn a window).
@@ -49,6 +73,13 @@
 - (void)webView:(WKWebView *)webView
     decidePolicyForNavigationAction:(WKNavigationAction *)navigationAction
                     decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler {
+    // Anchors with a download attribute (including blob: URLs built by the
+    // page) become WKDownloads instead of navigations.
+    if (navigationAction.shouldPerformDownload) {
+        decisionHandler(WKNavigationActionPolicyDownload);
+        return;
+    }
+
     NSURL *url = navigationAction.request.URL;
     BOOL isMainFrame = navigationAction.targetFrame != nil && navigationAction.targetFrame.mainFrame;
 
@@ -64,6 +95,163 @@
     decisionHandler(WKNavigationActionPolicyAllow);
 }
 
+- (void)webView:(WKWebView *)webView
+    decidePolicyForNavigationResponse:(WKNavigationResponse *)navigationResponse
+                      decisionHandler:(void (^)(WKNavigationResponsePolicy))decisionHandler {
+    // Server responses the web view cannot render (archives, binaries, ...)
+    // and explicit attachments (Content-Disposition) become downloads instead
+    // of dead navigations.
+    BOOL attachment = NO;
+
+    if ([navigationResponse.response isKindOfClass:[NSHTTPURLResponse class]]) {
+        NSString *disposition = ((NSHTTPURLResponse *)navigationResponse.response).allHeaderFields[@"Content-Disposition"];
+        attachment = [disposition.lowercaseString hasPrefix:@"attachment"];
+    }
+
+    if (navigationResponse.forMainFrame && (attachment || !navigationResponse.canShowMIMEType)) {
+        decisionHandler(WKNavigationResponsePolicyDownload);
+        return;
+    }
+
+    decisionHandler(WKNavigationResponsePolicyAllow);
+}
+
+- (void)webView:(WKWebView *)webView navigationAction:(WKNavigationAction *)navigationAction didBecomeDownload:(WKDownload *)download {
+    download.delegate = self;
+}
+
+- (void)webView:(WKWebView *)webView navigationResponse:(WKNavigationResponse *)navigationResponse didBecomeDownload:(WKDownload *)download {
+    download.delegate = self;
+}
+
+#pragma mark - Downloads
+
+- (void)download:(WKDownload *)download
+    decideDestinationUsingResponse:(NSURLResponse *)response
+                 suggestedFilename:(NSString *)suggestedFilename
+                 completionHandler:(void (^)(NSURL *))completionHandler {
+    NSURL *dir = [NSFileManager.defaultManager URLForDirectory:NSDownloadsDirectory
+                                                      inDomain:NSUserDomainMask
+                                             appropriateForURL:nil
+                                                        create:YES
+                                                         error:nil];
+
+    if (dir == nil) {
+        completionHandler(nil);
+        return;
+    }
+
+    NSString *name = suggestedFilename.length > 0 ? suggestedFilename : @"download";
+    NSURL *destination = [dir URLByAppendingPathComponent:name];
+
+    NSString *base = name.stringByDeletingPathExtension;
+    NSString *extension = name.pathExtension;
+
+    for (int i = 2; [NSFileManager.defaultManager fileExistsAtPath:destination.path]; i++) {
+        NSString *candidate = extension.length > 0
+            ? [NSString stringWithFormat:@"%@ (%d).%@", base, i, extension]
+            : [NSString stringWithFormat:@"%@ (%d)", base, i];
+        destination = [dir URLByAppendingPathComponent:candidate];
+    }
+
+    [self.downloads setObject:destination forKey:download];
+    completionHandler(destination);
+}
+
+- (void)downloadDidFinish:(WKDownload *)download {
+    NSURL *url = [self.downloads objectForKey:download];
+
+    if (url != nil) {
+        // Bounce the Downloads stack in the dock, like browsers do.
+        [[NSDistributedNotificationCenter defaultCenter] postNotificationName:@"com.apple.DownloadFileFinished"
+                                                                       object:url.path];
+    }
+
+    [self.downloads removeObjectForKey:download];
+}
+
+- (void)download:(WKDownload *)download didFailWithError:(NSError *)error resumeData:(NSData *)resumeData {
+    [self.downloads removeObjectForKey:download];
+}
+
+#pragma mark - JavaScript dialogs
+
+- (void)webView:(WKWebView *)webView
+    runJavaScriptAlertPanelWithMessage:(NSString *)message
+                      initiatedByFrame:(WKFrameInfo *)frame
+                     completionHandler:(void (^)(void))completionHandler {
+    NSAlert *alert = [NSAlert new];
+    alert.messageText = message ?: @"";
+    [alert addButtonWithTitle:@"OK"];
+
+    [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response) {
+        completionHandler();
+    }];
+}
+
+- (void)webView:(WKWebView *)webView
+    runJavaScriptConfirmPanelWithMessage:(NSString *)message
+                        initiatedByFrame:(WKFrameInfo *)frame
+                       completionHandler:(void (^)(BOOL))completionHandler {
+    NSAlert *alert = [NSAlert new];
+    alert.messageText = message ?: @"";
+    [alert addButtonWithTitle:@"OK"];
+    [alert addButtonWithTitle:@"Cancel"];
+
+    [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response) {
+        completionHandler(response == NSAlertFirstButtonReturn);
+    }];
+}
+
+- (void)webView:(WKWebView *)webView
+    runJavaScriptTextInputPanelWithPrompt:(NSString *)prompt
+                              defaultText:(NSString *)defaultText
+                         initiatedByFrame:(WKFrameInfo *)frame
+                        completionHandler:(void (^)(NSString *))completionHandler {
+    NSAlert *alert = [NSAlert new];
+    alert.messageText = prompt ?: @"";
+    [alert addButtonWithTitle:@"OK"];
+    [alert addButtonWithTitle:@"Cancel"];
+
+    NSTextField *input = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 260, 24)];
+    input.stringValue = defaultText ?: @"";
+    alert.accessoryView = input;
+    alert.window.initialFirstResponder = input;
+
+    [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response) {
+        completionHandler(response == NSAlertFirstButtonReturn ? input.stringValue : nil);
+    }];
+}
+
+// <input type="file">
+- (void)webView:(WKWebView *)webView
+    runOpenPanelWithParameters:(WKOpenPanelParameters *)parameters
+              initiatedByFrame:(WKFrameInfo *)frame
+             completionHandler:(void (^)(NSArray<NSURL *> *))completionHandler {
+    NSOpenPanel *panel = [NSOpenPanel openPanel];
+    panel.canChooseFiles = YES;
+    panel.canChooseDirectories = parameters.allowsDirectories;
+    panel.allowsMultipleSelection = parameters.allowsMultipleSelection;
+
+    [panel beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response) {
+        completionHandler(response == NSModalResponseOK ? panel.URLs : nil);
+    }];
+}
+
+#pragma mark - Zoom
+
+- (void)zoomIn:(id)sender {
+    self.webView.pageZoom = MIN(self.webView.pageZoom * 1.1, 3.0);
+}
+
+- (void)zoomOut:(id)sender {
+    self.webView.pageZoom = MAX(self.webView.pageZoom / 1.1, 0.5);
+}
+
+- (void)actualSize:(id)sender {
+    self.webView.pageZoom = 1.0;
+}
+
 @end
 
 static NSMenuItem *MenuItem(NSString *title, SEL action, NSString *key, NSEventModifierFlags modifiers) {
@@ -76,9 +264,15 @@ static NSMenuItem *MenuItem(NSString *title, SEL action, NSString *key, NSEventM
     return item;
 }
 
+static NSMenuItem *TargetedMenuItem(NSString *title, id target, SEL action, NSString *key) {
+    NSMenuItem *item = MenuItem(title, action, key, 0);
+    item.target = target;
+    return item;
+}
+
 // A minimal but complete menu bar: without an Edit menu, Cmd+C/V/X and
 // friends do not reach the WKWebView at all.
-static void BuildMenu(WKWebView *webView) {
+static void BuildMenu(ShellApp *delegate) {
     NSString *appName = [NSProcessInfo processInfo].processName;
 
     NSMenu *appMenu = [[NSMenu alloc] initWithTitle:appName];
@@ -102,8 +296,13 @@ static void BuildMenu(WKWebView *webView) {
 
     NSMenu *viewMenu = [[NSMenu alloc] initWithTitle:@"View"];
     NSMenuItem *reload = MenuItem(@"Reload", @selector(reload:), @"r", 0);
-    reload.target = webView;
+    reload.target = delegate.webView;
     [viewMenu addItem:reload];
+    [viewMenu addItem:[NSMenuItem separatorItem]];
+    [viewMenu addItem:TargetedMenuItem(@"Actual Size", delegate, @selector(actualSize:), @"0")];
+    [viewMenu addItem:TargetedMenuItem(@"Zoom In", delegate, @selector(zoomIn:), @"+")];
+    [viewMenu addItem:TargetedMenuItem(@"Zoom Out", delegate, @selector(zoomOut:), @"-")];
+    [viewMenu addItem:[NSMenuItem separatorItem]];
     [viewMenu addItem:MenuItem(@"Enter Full Screen", @selector(toggleFullScreen:), @"f", NSEventModifierFlagCommand | NSEventModifierFlagControl)];
 
     NSMenu *windowMenu = [[NSMenu alloc] initWithTitle:@"Window"];
@@ -140,6 +339,10 @@ void ShellRun(const char *url, const char *title, int width, int height, int min
         window.title = titleString;
         window.tabbingMode = NSWindowTabbingModeDisallowed;
 
+        // Matches the system appearance, so the moment before the first page
+        // paint doesn't flash white in dark mode.
+        window.backgroundColor = [NSColor windowBackgroundColor];
+
         if (minWidth > 0 || minHeight > 0) {
             window.minSize = NSMakeSize(minWidth, minHeight);
         }
@@ -155,6 +358,12 @@ void ShellRun(const char *url, const char *title, int width, int height, int min
 
         WKWebView *webView = [[WKWebView alloc] initWithFrame:frame configuration:configuration];
 
+        // Draw the window background instead of white until the page paints.
+        @try {
+            [webView setValue:@NO forKey:@"drawsBackground"];
+        } @catch (NSException *exception) {
+        }
+
         if (@available(macOS 13.3, *)) {
             webView.inspectable = debug ? YES : NO;
         }
@@ -163,6 +372,7 @@ void ShellRun(const char *url, const char *title, int width, int height, int min
         delegate.window = window;
         delegate.webView = webView;
         delegate.baseURL = [NSURL URLWithString:[NSString stringWithUTF8String:url]];
+        delegate.downloads = [NSMapTable weakToStrongObjectsMapTable];
 
         webView.UIDelegate = delegate;
         webView.navigationDelegate = delegate;
@@ -174,7 +384,7 @@ void ShellRun(const char *url, const char *title, int width, int height, int min
         gDelegate = delegate;
 
         [NSApp setDelegate:delegate];
-        BuildMenu(webView);
+        BuildMenu(delegate);
 
         window.contentView = webView;
         [webView loadRequest:[NSURLRequest requestWithURL:delegate.baseURL]];
@@ -183,5 +393,9 @@ void ShellRun(const char *url, const char *title, int width, int height, int min
         [NSApp activateIgnoringOtherApps:YES];
 
         [NSApp run];
+
+        // The run loop was stopped by applicationShouldTerminate: — take the
+        // window down before control returns to Go.
+        [window close];
     }
 }

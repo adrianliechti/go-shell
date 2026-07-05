@@ -54,9 +54,9 @@ type Options struct {
 	Debug bool
 }
 
-// Run opens the window and blocks until it is closed. It must be called from
-// the main goroutine. On macOS, quitting the app terminates the process
-// before Run returns.
+// Run opens the window and blocks until it is closed (or the app is quit),
+// then returns so deferred cleanup can run. It must be called from the main
+// goroutine.
 func Run(opts Options) error {
 	if opts.Title == "" {
 		return errors.New("shell: Title is required")
@@ -69,6 +69,8 @@ func Run(opts Options) error {
 	if opts.Height <= 0 {
 		opts.Height = 800
 	}
+
+	var serveErr chan error
 
 	switch {
 	case opts.Handler != nil && opts.URL != "":
@@ -94,7 +96,11 @@ func Run(opts Options) error {
 			return err
 		}
 
-		go http.Serve(ln, protect(secret, opts.Handler))
+		serveErr = make(chan error, 1)
+
+		go func() {
+			serveErr <- http.Serve(ln, protect(secret, opts.Handler))
+		}()
 
 		opts.URL = fmt.Sprintf("http://127.0.0.1:%d/?shell_token=%s", ln.Addr().(*net.TCPAddr).Port, secret)
 
@@ -102,7 +108,21 @@ func Run(opts Options) error {
 		return errors.New("shell: URL or Handler is required")
 	}
 
-	return run(opts)
+	if err := run(opts); err != nil {
+		return err
+	}
+
+	// Surface a server that died while the window was open — the UI would
+	// have appeared dead with no hint why.
+	if serveErr != nil {
+		select {
+		case err := <-serveErr:
+			return fmt.Errorf("shell: server failed: %w", err)
+		default:
+		}
+	}
+
+	return nil
 }
 
 func token() (string, error) {
