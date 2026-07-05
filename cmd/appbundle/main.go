@@ -70,11 +70,18 @@ func main() {
 	// the binary's minos silently becomes the build host's OS version, and
 	// the arch silently becomes the build host's arch — either can drift from
 	// what a release archive name promises.
+	//
+	// The deployment target goes into CGO_CFLAGS/CGO_LDFLAGS (keeping Go's
+	// "-g -O2" defaults) instead of MACOSX_DEPLOYMENT_TARGET: the flags are
+	// part of the build-cache key, while the env var is not — cached cgo
+	// objects compiled for the host OS would be reused and trigger
+	// "object file was built for newer macOS version" link warnings.
 	buildEnv := []string{
 		"CGO_ENABLED=1",
 		"GOOS=darwin",
 		"GOARCH=" + *arch,
-		"MACOSX_DEPLOYMENT_TARGET=" + *minos,
+		"CGO_CFLAGS=-g -O2 -mmacosx-version-min=" + *minos,
+		"CGO_LDFLAGS=-g -O2 -mmacosx-version-min=" + *minos,
 	}
 	runEnv(buildEnv, "go", "build", "-trimpath", "-ldflags=-s -w", "-o", filepath.Join(contents, "MacOS", *name), "./"+filepath.ToSlash(filepath.Clean(*pkg)))
 
