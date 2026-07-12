@@ -5,8 +5,8 @@ go 1.26.0
 require (
 	github.com/jchv/go-webview2 v0.0.0-20260205173254-56598839c808
 	github.com/tc-hib/winres v0.3.1
-	golang.org/x/image v0.43.0
-	golang.org/x/sys v0.46.0
+	golang.org/x/image v0.44.0
+	golang.org/x/sys v0.47.0
 )
 
 require (
