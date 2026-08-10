@@ -288,7 +288,7 @@ static void BuildMenu(ShellApp *delegate) {
     [appMenu addItem:MenuItem([@"Quit " stringByAppendingString:appName], @selector(terminate:), @"q", 0)];
 
     NSMenu *fileMenu = [[NSMenu alloc] initWithTitle:@"File"];
-    [fileMenu addItem:MenuItem(@"Close Window", @selector(performClose:), @"w", 0)];
+    [fileMenu addItem:MenuItem(@"Close Window", @selector(performClose:), @"W", 0)];
 
     NSMenu *editMenu = [[NSMenu alloc] initWithTitle:@"Edit"];
     [editMenu addItem:MenuItem(@"Undo", @selector(undo:), @"z", 0)];
