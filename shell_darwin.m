@@ -382,6 +382,10 @@ static void BuildMenu(ShellApp *delegate, NSArray *customFileItems) {
     [appMenu addItem:MenuItem([@"Quit " stringByAppendingString:appName], @selector(terminate:), @"q", 0)];
 
     NSMenu *fileMenu = [[NSMenu alloc] initWithTitle:@"File"];
+    // Custom commands manage their own enabled state. AppKit's default menu
+    // validation would otherwise re-enable every item whose target implements
+    // performFileCommand:, overriding both Disabled and browser state updates.
+    fileMenu.autoenablesItems = NO;
     for (id value in customFileItems) {
         if (![value isKindOfClass:[NSDictionary class]]) {
             continue;
