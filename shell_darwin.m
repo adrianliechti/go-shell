@@ -5,17 +5,79 @@
 #include <string.h>
 
 extern void shellFolderPicked(char *path, uintptr_t ctx);
+void ShellConfigureTitleBar(NSWindow *window, WKWebView *webView);
+void ShellPositionTitleBarControls(NSWindow *window, NSInteger offsetX, NSInteger offsetY);
 
-@interface ShellApp : NSObject <NSApplicationDelegate, WKUIDelegate, WKNavigationDelegate, WKDownloadDelegate>
+@interface ShellApp : NSObject <NSApplicationDelegate, NSWindowDelegate, WKUIDelegate, WKNavigationDelegate, WKDownloadDelegate, WKScriptMessageHandler>
 
 @property(strong) NSWindow *window;
 @property(strong) WKWebView *webView;
 @property(strong) NSURL *baseURL;
 @property(strong) NSMapTable<WKDownload *, NSURL *> *downloads;
+@property BOOL titleBarOverlay;
+@property NSInteger controlsOffsetX;
+@property NSInteger controlsOffsetY;
+@property(strong) NSMutableDictionary<NSString *, NSMenuItem *> *commandItems;
 
 @end
 
 @implementation ShellApp
+
+- (void)userContentController:(WKUserContentController *)userContentController
+      didReceiveScriptMessage:(WKScriptMessage *)message {
+    if (![message.name isEqualToString:@"shellCommandState"] ||
+        ![message.body isKindOfClass:[NSDictionary class]]) {
+        return;
+    }
+
+    NSDictionary *state = message.body;
+    NSString *command = state[@"command"];
+    NSNumber *enabled = state[@"enabled"];
+    if (![command isKindOfClass:[NSString class]] ||
+        ![enabled isKindOfClass:[NSNumber class]]) {
+        return;
+    }
+
+    self.commandItems[command].enabled = enabled.boolValue;
+}
+
+- (void)performFileCommand:(NSMenuItem *)sender {
+    NSString *command = sender.representedObject;
+    if (command.length == 0) {
+        return;
+    }
+
+    NSData *encoded = [NSJSONSerialization dataWithJSONObject:command
+                                                      options:NSJSONWritingFragmentsAllowed
+                                                        error:nil];
+    if (encoded == nil) {
+        return;
+    }
+
+    NSString *detail = [[NSString alloc] initWithData:encoded encoding:NSUTF8StringEncoding];
+    NSString *script = [NSString stringWithFormat:
+        @"window.dispatchEvent(new CustomEvent('shell:command',{detail:%@}));",
+        detail];
+    [self.webView evaluateJavaScript:script completionHandler:nil];
+}
+
+- (void)positionWindowControls {
+    if (!self.titleBarOverlay) {
+        return;
+    }
+    ShellPositionTitleBarControls(
+        self.window,
+        self.controlsOffsetX,
+        self.controlsOffsetY
+    );
+}
+
+- (void)windowDidResize:(NSNotification *)notification {
+    [self positionWindowControls];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self positionWindowControls];
+    });
+}
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender {
     return YES;
@@ -277,7 +339,39 @@ static NSMenuItem *TargetedMenuItem(NSString *title, id target, SEL action, NSSt
 
 // A minimal but complete menu bar: without an Edit menu, Cmd+C/V/X and
 // friends do not reach the WKWebView at all.
-static void BuildMenu(ShellApp *delegate) {
+static NSMenuItem *CommandMenuItem(ShellApp *delegate, NSDictionary *definition) {
+    NSString *title = definition[@"title"];
+    NSString *command = definition[@"command"];
+    NSString *key = definition[@"key"] ?: @"";
+    if (title.length == 0 || command.length == 0) {
+        return nil;
+    }
+
+    NSMenuItem *item = TargetedMenuItem(
+        title,
+        delegate,
+        @selector(performFileCommand:),
+        key
+    );
+    item.representedObject = command;
+    item.enabled = ![definition[@"disabled"] boolValue];
+    delegate.commandItems[command] = item;
+
+    NSEventModifierFlags modifiers = NSEventModifierFlagCommand;
+    if ([definition[@"shift"] boolValue]) {
+        modifiers |= NSEventModifierFlagShift;
+    }
+    if ([definition[@"alt"] boolValue]) {
+        modifiers |= NSEventModifierFlagOption;
+    }
+    if ([definition[@"control"] boolValue]) {
+        modifiers |= NSEventModifierFlagControl;
+    }
+    item.keyEquivalentModifierMask = modifiers;
+    return item;
+}
+
+static void BuildMenu(ShellApp *delegate, NSArray *customFileItems) {
     NSString *appName = [NSProcessInfo processInfo].processName;
 
     NSMenu *appMenu = [[NSMenu alloc] initWithTitle:appName];
@@ -288,6 +382,20 @@ static void BuildMenu(ShellApp *delegate) {
     [appMenu addItem:MenuItem([@"Quit " stringByAppendingString:appName], @selector(terminate:), @"q", 0)];
 
     NSMenu *fileMenu = [[NSMenu alloc] initWithTitle:@"File"];
+    for (id value in customFileItems) {
+        if (![value isKindOfClass:[NSDictionary class]]) {
+            continue;
+        }
+        NSDictionary *definition = value;
+        if ([definition[@"separator"] boolValue]) {
+            [fileMenu addItem:[NSMenuItem separatorItem]];
+            continue;
+        }
+        NSMenuItem *item = CommandMenuItem(delegate, definition);
+        if (item != nil) {
+            [fileMenu addItem:item];
+        }
+    }
     [fileMenu addItem:MenuItem(@"Close Window", @selector(performClose:), @"W", 0)];
 
     NSMenu *editMenu = [[NSMenu alloc] initWithTitle:@"Edit"];
@@ -359,7 +467,19 @@ void ShellPickFolder(const char *title, uintptr_t ctx) {
     });
 }
 
-void ShellRun(const char *url, const char *title, int width, int height, int minWidth, int minHeight, int debug) {
+void ShellRun(
+    const char *url,
+    const char *title,
+    int width,
+    int height,
+    int minWidth,
+    int minHeight,
+    int debug,
+    int titleBarOverlay,
+    int controlsOffsetX,
+    int controlsOffsetY,
+    const char *fileMenu
+) {
     @autoreleasepool {
         [NSApplication sharedApplication];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
@@ -411,9 +531,30 @@ void ShellRun(const char *url, const char *title, int width, int height, int min
         delegate.webView = webView;
         delegate.baseURL = [NSURL URLWithString:[NSString stringWithUTF8String:url]];
         delegate.downloads = [NSMapTable weakToStrongObjectsMapTable];
+        delegate.titleBarOverlay = titleBarOverlay ? YES : NO;
+        delegate.controlsOffsetX = controlsOffsetX;
+        delegate.controlsOffsetY = controlsOffsetY;
+        delegate.commandItems = [NSMutableDictionary dictionary];
 
+        window.delegate = delegate;
         webView.UIDelegate = delegate;
         webView.navigationDelegate = delegate;
+
+        if (titleBarOverlay) {
+            ShellConfigureTitleBar(window, webView);
+        }
+
+        NSString *commandStateScript = @"window.addEventListener('shell:command-state',(event)=>{"
+            "const state=event.detail;"
+            "if(!state||typeof state.command!=='string'||typeof state.enabled!=='boolean')return;"
+            "window.webkit.messageHandlers.shellCommandState.postMessage(state);"
+        "});";
+        WKUserContentController *controller = webView.configuration.userContentController;
+        [controller addScriptMessageHandler:delegate name:@"shellCommandState"];
+        [controller addUserScript:[[WKUserScript alloc]
+            initWithSource:commandStateScript
+            injectionTime:WKUserScriptInjectionTimeAtDocumentStart
+            forMainFrameOnly:YES]];
 
         // Keep a permanent strong reference: NSApp.delegate and the WKWebView
         // delegate slots are all weak, so without this the only strong owner
@@ -422,13 +563,30 @@ void ShellRun(const char *url, const char *title, int width, int height, int min
         gDelegate = delegate;
 
         [NSApp setDelegate:delegate];
-        BuildMenu(delegate);
+
+        NSArray *customFileItems = @[];
+        if (fileMenu != NULL && strlen(fileMenu) > 0) {
+            NSData *data = [[NSString stringWithUTF8String:fileMenu]
+                dataUsingEncoding:NSUTF8StringEncoding];
+            id parsed = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+            if ([parsed isKindOfClass:[NSArray class]]) {
+                customFileItems = parsed;
+            }
+        }
+        BuildMenu(delegate, customFileItems);
 
         window.contentView = webView;
         [webView loadRequest:[NSURLRequest requestWithURL:delegate.baseURL]];
 
         [window makeKeyAndOrderFront:nil];
         [NSApp activateIgnoringOtherApps:YES];
+
+        if (titleBarOverlay) {
+            [delegate positionWindowControls];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [delegate positionWindowControls];
+            });
+        }
 
         [NSApp run];
 

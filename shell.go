@@ -2,9 +2,10 @@
 // (WKWebView on macOS, WebView2 on Windows 11) — a minimal shell for local
 // web apps.
 //
-// It is intentionally small: a single window and no JavaScript bridge — the
-// hosted app talks to its backend over HTTP and WebSocket. Links leaving the
-// app's origin open in the default browser.
+// It is intentionally small: a single window with narrowly scoped events for
+// native shell commands and window dragging. The hosted app otherwise talks to
+// its backend over HTTP and WebSocket. Links leaving the app's origin open in
+// the default browser.
 //
 // Serve an http.Handler in a window:
 //
@@ -53,6 +54,18 @@ type Options struct {
 
 	// Debug enables the web inspector (macOS) / devtools (Windows).
 	Debug bool
+
+	// TitleBar controls native title-bar presentation. Overlay mode lets web
+	// content occupy the title-bar area and enables regions marked with the CSS
+	// custom property "--shell-window-drag: drag" to move the window. It is
+	// currently supported on macOS; other platforms retain their native frame.
+	TitleBar TitleBarOptions
+
+	// FileMenu adds application commands to the native File menu. Selecting
+	// one dispatches a "shell:command" CustomEvent on window whose detail is
+	// the item's Command. Key is a platform key equivalent; the primary
+	// Command/Control modifier is implied.
+	FileMenu []MenuItem
 }
 
 // Run opens the window and blocks until it is closed (or the app is quit),

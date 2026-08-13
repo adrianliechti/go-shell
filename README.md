@@ -26,6 +26,12 @@ func main() {
 
 		Width:  1280,
 		Height: 800,
+
+		TitleBar: shell.TitleBarOptions{Overlay: true},
+		FileMenu: []shell.MenuItem{
+			{Title: "New File...", Command: "new-file", Key: "n"},
+			{Title: "Save", Command: "save", Key: "s", Disabled: true},
+		},
 	})
 
 	if err != nil {
@@ -53,6 +59,32 @@ from a request handler (never from the main goroutine):
 ```go
 path, err := shell.PickFolder("Open Workspace") // "" if cancelled
 ```
+
+On macOS, `TitleBar.Overlay` lets the page draw beneath the native title bar.
+Mark drag regions in CSS while leaving interactive children unmarked:
+
+```css
+.titlebar { --shell-window-drag: drag; }
+.titlebar button { --shell-window-drag: no-drag; }
+```
+
+`FileMenu` prepends application commands to the native File menu. A selection
+dispatches a `shell:command` event in the page:
+
+```js
+window.addEventListener("shell:command", (event) => {
+  if (event.detail === "save") saveCurrentDocument();
+});
+
+window.dispatchEvent(new CustomEvent("shell:command-state", {
+  detail: { command: "save", enabled: hasUnsavedChanges },
+}));
+```
+
+`Key` uses the platform's primary modifier (Command on macOS); `Shift`, `Alt`,
+and `Control` add modifiers. `Disabled` sets the initial state; publish a
+`shell:command-state` event when it changes. Use `{Separator: true}` to group
+commands. Native application menus are currently available on macOS.
 
 With `Handler`, the loopback listener is guarded by a per-run random token:
 the window's first navigation exchanges it for an HttpOnly, SameSite=Strict

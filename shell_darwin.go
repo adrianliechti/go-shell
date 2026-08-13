@@ -6,12 +6,13 @@ package shell
 #include <stdlib.h>
 #include <stdint.h>
 
-void ShellRun(const char *url, const char *title, int width, int height, int minWidth, int minHeight, int debug);
+void ShellRun(const char *url, const char *title, int width, int height, int minWidth, int minHeight, int debug, int titleBarOverlay, int controlsOffsetX, int controlsOffsetY, const char *fileMenu);
 void ShellPickFolder(const char *title, uintptr_t ctx);
 */
 import "C"
 
 import (
+	"encoding/json"
 	"runtime/cgo"
 	"unsafe"
 )
@@ -28,8 +29,31 @@ func run(opts Options) error {
 	if opts.Debug {
 		debug = 1
 	}
+	overlay := C.int(0)
+	if opts.TitleBar.Overlay {
+		overlay = 1
+	}
 
-	C.ShellRun(url, title, C.int(opts.Width), C.int(opts.Height), C.int(opts.MinWidth), C.int(opts.MinHeight), debug)
+	menuJSON, err := json.Marshal(opts.FileMenu)
+	if err != nil {
+		return err
+	}
+	menu := C.CString(string(menuJSON))
+	defer C.free(unsafe.Pointer(menu))
+
+	C.ShellRun(
+		url,
+		title,
+		C.int(opts.Width),
+		C.int(opts.Height),
+		C.int(opts.MinWidth),
+		C.int(opts.MinHeight),
+		debug,
+		overlay,
+		C.int(opts.TitleBar.ControlsOffsetX),
+		C.int(opts.TitleBar.ControlsOffsetY),
+		menu,
+	)
 	return nil
 }
 
