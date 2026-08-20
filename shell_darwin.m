@@ -5,6 +5,7 @@
 #include <string.h>
 
 extern void shellFolderPicked(char *path, uintptr_t ctx);
+extern void shellShutdown(uintptr_t ctx);
 void ShellConfigureTitleBar(NSWindow *window, WKWebView *webView);
 void ShellPositionTitleBarControls(NSWindow *window, NSInteger offsetX, NSInteger offsetY);
 
@@ -18,6 +19,8 @@ void ShellPositionTitleBarControls(NSWindow *window, NSInteger offsetX, NSIntege
 @property NSInteger controlsOffsetX;
 @property NSInteger controlsOffsetY;
 @property(strong) NSMutableDictionary<NSString *, NSMenuItem *> *commandItems;
+@property uintptr_t shutdownContext;
+@property BOOL shutdownStarted;
 
 @end
 
@@ -83,13 +86,9 @@ void ShellPositionTitleBarControls(NSWindow *window, NSInteger offsetX, NSIntege
     return YES;
 }
 
-// Intercept quit (Cmd+Q, dock, last window closed) and stop the run loop
-// instead of terminating the process, so ShellRun — and with it the Go
-// shell.Run — returns and the app's deferred cleanup gets to run.
-- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
+// stop: only takes effect once an event is processed, so nudge the loop.
+- (void)stopRunLoop {
     [NSApp stop:nil];
-
-    // stop: only takes effect once an event is processed — nudge the loop.
     NSEvent *event = [NSEvent otherEventWithType:NSEventTypeApplicationDefined
                                         location:NSZeroPoint
                                    modifierFlags:0
@@ -100,8 +99,35 @@ void ShellPositionTitleBarControls(NSWindow *window, NSInteger offsetX, NSIntege
                                            data1:0
                                            data2:0];
     [NSApp postEvent:event atStart:YES];
+}
 
-    return NSTerminateCancel;
+// Intercept quit (Cmd+Q, dock, last window closed) so ShellRun — and with it
+// the Go shell.Run — returns instead of AppKit terminating the process. When
+// the app supplied a shutdown callback, keep the event loop alive while it
+// runs so macOS never sees a frozen app during backend cleanup.
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
+    if (self.shutdownStarted) {
+        return NSTerminateCancel;
+    }
+
+    self.shutdownStarted = YES;
+    [self.window orderOut:nil];
+
+    if (self.shutdownContext == 0) {
+        [self stopRunLoop];
+        return NSTerminateCancel;
+    }
+
+    uintptr_t shutdownContext = self.shutdownContext;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        shellShutdown(shutdownContext);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [NSApp replyToApplicationShouldTerminate:NO];
+            [self stopRunLoop];
+        });
+    });
+
+    return NSTerminateLater;
 }
 
 - (BOOL)applicationSupportsSecureRestorableState:(NSApplication *)app {
@@ -482,7 +508,8 @@ void ShellRun(
     int titleBarOverlay,
     int controlsOffsetX,
     int controlsOffsetY,
-    const char *fileMenu
+    const char *fileMenu,
+    uintptr_t shutdownContext
 ) {
     @autoreleasepool {
         [NSApplication sharedApplication];
@@ -539,6 +566,7 @@ void ShellRun(
         delegate.controlsOffsetX = controlsOffsetX;
         delegate.controlsOffsetY = controlsOffsetY;
         delegate.commandItems = [NSMutableDictionary dictionary];
+        delegate.shutdownContext = shutdownContext;
 
         window.delegate = delegate;
         webView.UIDelegate = delegate;

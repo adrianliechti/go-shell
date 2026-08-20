@@ -25,6 +25,7 @@ import (
 	"net"
 	"net/http"
 	"runtime"
+	"sync"
 	"sync/atomic"
 )
 
@@ -42,6 +43,11 @@ type Options struct {
 	// Handler is served on an ephemeral loopback listener and loaded in the
 	// window; it lives for the lifetime of the window.
 	Handler http.Handler
+
+	// OnShutdown runs once when the user closes the window or quits the app,
+	// before Run returns. On macOS the native event loop remains responsive
+	// while the callback runs.
+	OnShutdown func()
 
 	// Window size in logical pixels; defaults to 1280x800.
 	Width  int
@@ -66,6 +72,20 @@ type Options struct {
 	// the item's Command. Key is a platform key equivalent; the primary
 	// Command/Control modifier is implied.
 	FileMenu []MenuItem
+
+	shutdown func()
+}
+
+func (opts *Options) prepareShutdown() {
+	if opts.OnShutdown == nil {
+		return
+	}
+
+	callback := opts.OnShutdown
+	var once sync.Once
+	opts.shutdown = func() {
+		once.Do(callback)
+	}
 }
 
 // Run opens the window and blocks until it is closed (or the app is quit),
@@ -122,9 +142,13 @@ func Run(opts Options) error {
 		return errors.New("shell: URL or Handler is required")
 	}
 
+	opts.prepareShutdown()
 	running.Store(true)
 	err := run(opts)
 	running.Store(false)
+	if opts.shutdown != nil {
+		opts.shutdown()
+	}
 
 	if err != nil {
 		return err

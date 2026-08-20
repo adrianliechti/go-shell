@@ -6,6 +6,28 @@ import (
 	"testing"
 )
 
+func TestPrepareShutdownRunsCallbackOnce(t *testing.T) {
+	calls := 0
+	opts := Options{OnShutdown: func() { calls++ }}
+	opts.prepareShutdown()
+
+	opts.shutdown()
+	opts.shutdown()
+
+	if calls != 1 {
+		t.Fatalf("shutdown callback ran %d times, want 1", calls)
+	}
+}
+
+func TestPrepareShutdownWithoutCallback(t *testing.T) {
+	opts := Options{}
+	opts.prepareShutdown()
+
+	if opts.shutdown != nil {
+		t.Fatal("prepared a shutdown callback for nil OnShutdown")
+	}
+}
+
 func TestProtect(t *testing.T) {
 	secret, err := token()
 

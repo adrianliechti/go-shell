@@ -6,7 +6,7 @@ package shell
 #include <stdlib.h>
 #include <stdint.h>
 
-void ShellRun(const char *url, const char *title, int width, int height, int minWidth, int minHeight, int debug, int titleBarOverlay, int controlsOffsetX, int controlsOffsetY, const char *fileMenu);
+void ShellRun(const char *url, const char *title, int width, int height, int minWidth, int minHeight, int debug, int titleBarOverlay, int controlsOffsetX, int controlsOffsetY, const char *fileMenu, uintptr_t shutdownContext);
 void ShellPickFolder(const char *title, uintptr_t ctx);
 */
 import "C"
@@ -41,6 +41,12 @@ func run(opts Options) error {
 	menu := C.CString(string(menuJSON))
 	defer C.free(unsafe.Pointer(menu))
 
+	var shutdownHandle cgo.Handle
+	if opts.shutdown != nil {
+		shutdownHandle = cgo.NewHandle(opts.shutdown)
+		defer shutdownHandle.Delete()
+	}
+
 	C.ShellRun(
 		url,
 		title,
@@ -53,6 +59,7 @@ func run(opts Options) error {
 		C.int(opts.TitleBar.ControlsOffsetX),
 		C.int(opts.TitleBar.ControlsOffsetY),
 		menu,
+		C.uintptr_t(shutdownHandle),
 	)
 	return nil
 }
@@ -66,6 +73,14 @@ func pickFolder(title string) (string, error) {
 	C.ShellPickFolder(t, C.uintptr_t(cgo.NewHandle(ch)))
 
 	return <-ch, nil
+}
+
+//export shellShutdown
+func shellShutdown(ctx C.uintptr_t) {
+	if ctx == 0 {
+		return
+	}
+	cgo.Handle(ctx).Value().(func())()
 }
 
 //export shellFolderPicked

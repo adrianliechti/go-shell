@@ -26,6 +26,9 @@ func main() {
 
 		Width:  1280,
 		Height: 800,
+		OnShutdown: func() {
+			// Stop background work and close child processes.
+		},
 
 		TitleBar: shell.TitleBarOptions{Overlay: true},
 		FileMenu: []shell.MenuItem{
@@ -42,6 +45,11 @@ func main() {
 
 `shell.Run` must be called from the main goroutine (the native event loop
 runs on the main thread) and blocks until the window closes.
+
+`OnShutdown`, when set, runs exactly once after the user closes the window or
+quits the app and before `Run` returns. On macOS, the native event loop remains
+responsive while the callback runs, so bounded backend cleanup does not make
+the app appear hung while it is quitting.
 
 The window is a complete little browser shell: native JavaScript dialogs
 (`alert`/`confirm`/`prompt`), file pickers (`<input type="file">`), downloads
