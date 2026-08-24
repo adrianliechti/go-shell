@@ -51,6 +51,15 @@ func run(opts Options) error {
 		dataPath = filepath.Join(dir, opts.Title)
 	}
 
+	if opts.TitleBar.Overlay {
+		if target, err := url.Parse(opts.URL); err == nil {
+			query := target.Query()
+			query.Set("shell_chrome", "windows-overlay")
+			target.RawQuery = query.Encode()
+			opts.URL = target.String()
+		}
+	}
+
 	base, _ := url.Parse(opts.URL)
 
 	w := webview2.NewWithOptions(webview2.WebViewOptions{
@@ -102,6 +111,12 @@ func run(opts Options) error {
 	}
 	document.addEventListener('click', shellLinkHandler, true);
 	document.addEventListener('auxclick', shellLinkHandler, true);`)
+
+	if opts.TitleBar.Overlay {
+		if f, err := installOverlay(w, hwnd, opts); err == nil {
+			defer f.destroy()
+		}
+	}
 
 	w.Navigate(opts.URL)
 
@@ -155,22 +170,27 @@ func scaleForDPI(v int) int {
 // applyDarkTitleBar keeps the title bar from staying white when Windows runs
 // in dark mode.
 func applyDarkTitleBar(hwnd uintptr) {
+	if !darkMode() {
+		return
+	}
+
+	enabled := int32(1)
+	procSetWindowAttribute.Call(hwnd, dwmwaUseImmersiveDarkMode, uintptr(unsafe.Pointer(&enabled)), unsafe.Sizeof(enabled))
+}
+
+// darkMode reports whether Windows apps are set to the dark theme.
+func darkMode() bool {
 	key, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`, registry.QUERY_VALUE)
 
 	if err != nil {
-		return
+		return false
 	}
 
 	defer key.Close()
 
 	light, _, err := key.GetIntegerValue("AppsUseLightTheme")
 
-	if err != nil || light != 0 {
-		return
-	}
-
-	enabled := int32(1)
-	procSetWindowAttribute.Call(hwnd, dwmwaUseImmersiveDarkMode, uintptr(unsafe.Pointer(&enabled)), unsafe.Sizeof(enabled))
+	return err == nil && light == 0
 }
 
 // Window placement persistence — the macOS shell gets this for free via

@@ -68,13 +68,37 @@ from a request handler (never from the main goroutine):
 path, err := shell.PickFolder("Open Workspace") // "" if cancelled
 ```
 
-On macOS, `TitleBar.Overlay` lets the page draw beneath the native title bar.
-Mark drag regions in CSS while leaving interactive children unmarked:
+`TitleBar.Overlay` lets the page draw where the title bar would be, so a tab
+strip or toolbar can sit in the window chrome itself. Mark drag regions in CSS
+while leaving interactive children unmarked:
 
 ```css
 .titlebar { --shell-window-drag: drag; }
 .titlebar button { --shell-window-drag: no-drag; }
 ```
+
+Dragging a marked region moves the window, double-clicking it maximizes or
+restores, and right-clicking it opens the window's system menu.
+
+The window controls stay native, so they behave exactly as users expect — on
+macOS the traffic lights float over the content (nudge them inward with
+`ControlsOffsetX`/`ControlsOffsetY`), and on Windows the shell draws the caption
+buttons at the trailing edge, including the Windows 11 Snap Layouts flyout on
+the maximize button. Because they sit inside the page's layout, the shell
+publishes the space to reserve for them as CSS custom properties on the document
+element:
+
+```css
+.titlebar {
+  height: var(--shell-titlebar-height, 40px);
+  padding-left: var(--shell-titlebar-inset-left, 0px);
+  padding-right: var(--shell-titlebar-inset-right, 0px);
+}
+```
+
+They update on resize, maximize and DPI changes; `html[data-shell-window]` is
+`maximized` or `normal`. `TitleBar.Height` overrides the default strip height
+(the system caption height).
 
 `FileMenu` prepends application commands to the native File menu. A selection
 dispatches a `shell:command` event in the page:
@@ -89,10 +113,14 @@ window.dispatchEvent(new CustomEvent("shell:command-state", {
 }));
 ```
 
-`Key` uses the platform's primary modifier (Command on macOS); `Shift`, `Alt`,
-and `Control` add modifiers. `Disabled` sets the initial state; publish a
-`shell:command-state` event when it changes. Use `{Separator: true}` to group
-commands. Native application menus are currently available on macOS.
+`Key` uses the platform's primary modifier (Command on macOS, Control on
+Windows); `Shift`, `Alt`, and `Control` add modifiers. `Disabled` sets the
+initial state; publish a `shell:command-state` event when it changes. Use
+`{Separator: true}` to group commands.
+
+macOS puts these in the menu bar. Windows has no menu bar once the caption is
+gone, so `TitleBar.Menu` draws a menu button at the leading edge of the overlay
+that opens them as a popup instead.
 
 With `Handler`, the loopback listener is guarded by a per-run random token:
 the window's first navigation exchanges it for an HttpOnly, SameSite=Strict

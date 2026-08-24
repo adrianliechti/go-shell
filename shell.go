@@ -63,14 +63,16 @@ type Options struct {
 
 	// TitleBar controls native title-bar presentation. Overlay mode lets web
 	// content occupy the title-bar area and enables regions marked with the CSS
-	// custom property "--shell-window-drag: drag" to move the window. It is
-	// currently supported on macOS; other platforms retain their native frame.
+	// custom property "--shell-window-drag: drag" to move the window. The window
+	// controls stay native; the space to reserve for them is published to the
+	// page as CSS custom properties on the document element.
 	TitleBar TitleBarOptions
 
 	// FileMenu adds application commands to the native File menu. Selecting
 	// one dispatches a "shell:command" CustomEvent on window whose detail is
 	// the item's Command. Key is a platform key equivalent; the primary
-	// Command/Control modifier is implied.
+	// Command/Control modifier is implied. Windows has no menu bar in an overlay
+	// title bar, so there they need TitleBar.Menu to be reachable.
 	FileMenu []MenuItem
 
 	shutdown func()
