@@ -3,6 +3,7 @@ package shell
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -98,5 +99,21 @@ func TestProtect(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("wrong cookie: got %d, want 401", rec.Code)
+	}
+}
+
+func TestShellEnvironmentScriptPublishesHostAndInsets(t *testing.T) {
+	script := shellEnvironmentScript("windows", true)
+
+	for _, want := range []string{
+		`const platform = "windows"`,
+		"const overlay = true",
+		"Object.defineProperty(window, 'shell'",
+		"insets: { left: state.left, right: state.right }",
+		"'shell:titlebar-change'",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("environment script does not contain %q", want)
+		}
 	}
 }

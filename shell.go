@@ -53,8 +53,7 @@ type Options struct {
 	Width  int
 	Height int
 
-	// Minimum window size; unset means the platform default. Only enforced
-	// on macOS — WebView2 windows are freely resizable.
+	// Minimum window size; unset means the platform default.
 	MinWidth  int
 	MinHeight int
 
@@ -63,14 +62,17 @@ type Options struct {
 
 	// TitleBar controls native title-bar presentation. Overlay mode lets web
 	// content occupy the title-bar area and enables regions marked with the CSS
-	// custom property "--shell-window-drag: drag" to move the window. It is
-	// currently supported on macOS; other platforms retain their native frame.
+	// custom property "--shell-window-drag: drag" to move the window. The window
+	// controls stay native; the space to reserve for them is published to the
+	// page through window.shell and as CSS custom properties on the document
+	// element.
 	TitleBar TitleBarOptions
 
 	// FileMenu adds application commands to the native File menu. Selecting
 	// one dispatches a "shell:command" CustomEvent on window whose detail is
-	// the item's Command. Key is a platform key equivalent; the primary
-	// Command/Control modifier is implied.
+	// the item's Command. Key is a macOS key equivalent with Command implied.
+	// FileMenu is native on macOS; Windows applications should place equivalent
+	// commands in their web title bar.
 	FileMenu []MenuItem
 
 	shutdown func()

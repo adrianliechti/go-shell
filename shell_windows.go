@@ -3,6 +3,7 @@ package shell
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"os/exec"
@@ -73,11 +74,23 @@ func run(opts Options) error {
 	}
 
 	defer w.Destroy()
+	w.Init(shellEnvironmentScript("windows", opts.TitleBar.Overlay))
 
 	hwnd := uintptr(w.Window())
 
 	if opts.MinWidth > 0 || opts.MinHeight > 0 {
-		w.SetSize(scaleForDPI(opts.MinWidth), scaleForDPI(opts.MinHeight), webview2.HintMin)
+		minWidth := scaleForDPI(opts.MinWidth)
+		minHeight := scaleForDPI(opts.MinHeight)
+
+		if minWidth <= 0 {
+			minWidth = int(systemMetricForWindow(hwnd, smCxMinTrack))
+		}
+
+		if minHeight <= 0 {
+			minHeight = int(systemMetricForWindow(hwnd, smCyMinTrack))
+		}
+
+		w.SetSize(minWidth, minHeight, webview2.HintMin)
 	}
 
 	applyDarkTitleBar(hwnd)
@@ -102,6 +115,16 @@ func run(opts Options) error {
 	}
 	document.addEventListener('click', shellLinkHandler, true);
 	document.addEventListener('auxclick', shellLinkHandler, true);`)
+
+	if opts.TitleBar.Overlay {
+		f, err := installOverlay(w, hwnd, opts)
+
+		if err != nil {
+			return fmt.Errorf("shell: configure Windows title bar: %w", err)
+		}
+
+		defer f.destroy()
+	}
 
 	w.Navigate(opts.URL)
 
@@ -155,22 +178,27 @@ func scaleForDPI(v int) int {
 // applyDarkTitleBar keeps the title bar from staying white when Windows runs
 // in dark mode.
 func applyDarkTitleBar(hwnd uintptr) {
+	if !darkMode() {
+		return
+	}
+
+	enabled := int32(1)
+	procSetWindowAttribute.Call(hwnd, dwmwaUseImmersiveDarkMode, uintptr(unsafe.Pointer(&enabled)), unsafe.Sizeof(enabled))
+}
+
+// darkMode reports whether Windows apps are set to the dark theme.
+func darkMode() bool {
 	key, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`, registry.QUERY_VALUE)
 
 	if err != nil {
-		return
+		return false
 	}
 
 	defer key.Close()
 
 	light, _, err := key.GetIntegerValue("AppsUseLightTheme")
 
-	if err != nil || light != 0 {
-		return
-	}
-
-	enabled := int32(1)
-	procSetWindowAttribute.Call(hwnd, dwmwaUseImmersiveDarkMode, uintptr(unsafe.Pointer(&enabled)), unsafe.Sizeof(enabled))
+	return err == nil && light == 0
 }
 
 // Window placement persistence — the macOS shell gets this for free via

@@ -8,6 +8,7 @@ extern void shellFolderPicked(char *path, uintptr_t ctx);
 extern void shellShutdown(uintptr_t ctx);
 void ShellConfigureTitleBar(NSWindow *window, WKWebView *webView);
 void ShellPositionTitleBarControls(NSWindow *window, NSInteger offsetX, NSInteger offsetY);
+void ShellPublishTitleBarMetrics(NSWindow *window, WKWebView *webView, NSInteger requestedHeight);
 
 @interface ShellApp : NSObject <NSApplicationDelegate, NSWindowDelegate, WKUIDelegate, WKNavigationDelegate, WKDownloadDelegate, WKScriptMessageHandler>
 
@@ -16,6 +17,7 @@ void ShellPositionTitleBarControls(NSWindow *window, NSInteger offsetX, NSIntege
 @property(strong) NSURL *baseURL;
 @property(strong) NSMapTable<WKDownload *, NSURL *> *downloads;
 @property BOOL titleBarOverlay;
+@property NSInteger titleBarHeight;
 @property NSInteger controlsOffsetX;
 @property NSInteger controlsOffsetY;
 @property(strong) NSMutableDictionary<NSString *, NSMenuItem *> *commandItems;
@@ -28,6 +30,11 @@ void ShellPositionTitleBarControls(NSWindow *window, NSInteger offsetX, NSIntege
 
 - (void)userContentController:(WKUserContentController *)userContentController
       didReceiveScriptMessage:(WKScriptMessage *)message {
+    if ([message.name isEqualToString:@"shellTitleBar"]) {
+        [self publishTitleBarMetrics];
+        return;
+    }
+
     if (![message.name isEqualToString:@"shellCommandState"] ||
         ![message.body isKindOfClass:[NSDictionary class]]) {
         return;
@@ -42,6 +49,14 @@ void ShellPositionTitleBarControls(NSWindow *window, NSInteger offsetX, NSIntege
     }
 
     self.commandItems[command].enabled = enabled.boolValue;
+}
+
+- (void)publishTitleBarMetrics {
+    if (!self.titleBarOverlay) {
+        return;
+    }
+
+    ShellPublishTitleBarMetrics(self.window, self.webView, self.titleBarHeight);
 }
 
 - (void)performFileCommand:(NSMenuItem *)sender {
@@ -73,6 +88,7 @@ void ShellPositionTitleBarControls(NSWindow *window, NSInteger offsetX, NSIntege
         self.controlsOffsetX,
         self.controlsOffsetY
     );
+    [self publishTitleBarMetrics];
 }
 
 - (void)windowDidResize:(NSNotification *)notification {
@@ -506,8 +522,10 @@ void ShellRun(
     int minHeight,
     int debug,
     int titleBarOverlay,
+    int titleBarHeight,
     int controlsOffsetX,
     int controlsOffsetY,
+    const char *shellEnvironment,
     const char *fileMenu,
     uintptr_t shutdownContext
 ) {
@@ -533,7 +551,14 @@ void ShellRun(
         window.backgroundColor = [NSColor windowBackgroundColor];
 
         if (minWidth > 0 || minHeight > 0) {
-            window.minSize = NSMakeSize(minWidth, minHeight);
+            NSSize minimum = window.minSize;
+            if (minWidth > 0) {
+                minimum.width = minWidth;
+            }
+            if (minHeight > 0) {
+                minimum.height = minHeight;
+            }
+            window.minSize = minimum;
         }
 
         [window center];
@@ -563,6 +588,7 @@ void ShellRun(
         delegate.baseURL = [NSURL URLWithString:[NSString stringWithUTF8String:url]];
         delegate.downloads = [NSMapTable weakToStrongObjectsMapTable];
         delegate.titleBarOverlay = titleBarOverlay ? YES : NO;
+        delegate.titleBarHeight = titleBarHeight;
         delegate.controlsOffsetX = controlsOffsetX;
         delegate.controlsOffsetY = controlsOffsetY;
         delegate.commandItems = [NSMutableDictionary dictionary];
@@ -572,17 +598,26 @@ void ShellRun(
         webView.UIDelegate = delegate;
         webView.navigationDelegate = delegate;
 
-        if (titleBarOverlay) {
-            ShellConfigureTitleBar(window, webView);
-        }
-
         NSString *commandStateScript = @"window.addEventListener('shell:command-state',(event)=>{"
             "const state=event.detail;"
             "if(!state||typeof state.command!=='string'||typeof state.enabled!=='boolean')return;"
             "window.webkit.messageHandlers.shellCommandState.postMessage(state);"
         "});";
         WKUserContentController *controller = webView.configuration.userContentController;
+        if (shellEnvironment != NULL) {
+            NSString *environmentScript = [NSString stringWithUTF8String:shellEnvironment];
+            [controller addUserScript:[[WKUserScript alloc]
+                initWithSource:environmentScript
+                injectionTime:WKUserScriptInjectionTimeAtDocumentStart
+                forMainFrameOnly:YES]];
+        }
+        if (titleBarOverlay) {
+            ShellConfigureTitleBar(window, webView);
+        }
         [controller addScriptMessageHandler:delegate name:@"shellCommandState"];
+        if (titleBarOverlay) {
+            [controller addScriptMessageHandler:delegate name:@"shellTitleBar"];
+        }
         [controller addUserScript:[[WKUserScript alloc]
             initWithSource:commandStateScript
             injectionTime:WKUserScriptInjectionTimeAtDocumentStart

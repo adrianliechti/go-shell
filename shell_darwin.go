@@ -6,7 +6,7 @@ package shell
 #include <stdlib.h>
 #include <stdint.h>
 
-void ShellRun(const char *url, const char *title, int width, int height, int minWidth, int minHeight, int debug, int titleBarOverlay, int controlsOffsetX, int controlsOffsetY, const char *fileMenu, uintptr_t shutdownContext);
+void ShellRun(const char *url, const char *title, int width, int height, int minWidth, int minHeight, int debug, int titleBarOverlay, int titleBarHeight, int controlsOffsetX, int controlsOffsetY, const char *shellEnvironment, const char *fileMenu, uintptr_t shutdownContext);
 void ShellPickFolder(const char *title, uintptr_t ctx);
 */
 import "C"
@@ -41,6 +41,9 @@ func run(opts Options) error {
 	menu := C.CString(string(menuJSON))
 	defer C.free(unsafe.Pointer(menu))
 
+	environment := C.CString(shellEnvironmentScript("macos", opts.TitleBar.Overlay))
+	defer C.free(unsafe.Pointer(environment))
+
 	var shutdownHandle cgo.Handle
 	if opts.shutdown != nil {
 		shutdownHandle = cgo.NewHandle(opts.shutdown)
@@ -56,8 +59,10 @@ func run(opts Options) error {
 		C.int(opts.MinHeight),
 		debug,
 		overlay,
+		C.int(opts.TitleBar.Height),
 		C.int(opts.TitleBar.ControlsOffsetX),
 		C.int(opts.TitleBar.ControlsOffsetY),
+		environment,
 		menu,
 		C.uintptr_t(shutdownHandle),
 	)
