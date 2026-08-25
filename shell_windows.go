@@ -54,6 +54,9 @@ func run(opts Options) error {
 
 	base, _ := url.Parse(opts.URL)
 
+	// Cloaked until the page has something to show; see cloak_windows.go.
+	unhook := cloakNextWindow()
+
 	w := webview2.NewWithOptions(webview2.WebViewOptions{
 		Debug:     opts.Debug,
 		DataPath:  dataPath,
@@ -68,12 +71,31 @@ func run(opts Options) error {
 		},
 	})
 
+	cloaked := unhook()
+
 	if w == nil {
+		if cloaked != 0 {
+			setCloaked(cloaked, false)
+		}
+
 		fatalDialog(opts.Title, "Failed to create a WebView2 window.\n\nThe WebView2 Runtime may not be installed. Get it from:\nhttps://developer.microsoft.com/microsoft-edge/webview2/")
 		return errNoWebView2
 	}
 
 	defer w.Destroy()
+
+	// Install the reveal bridge first, giving WebView2's asynchronous document
+	// initialization registration the whole native setup interval to complete
+	// before Navigate. windowReveal remains a fail-open cleanup guard until the
+	// native window is destroyed.
+	reveal := newWindowReveal(cloaked)
+	defer reveal.close()
+
+	if err := w.Bind("__shellReveal", reveal.reveal); err != nil {
+		return fmt.Errorf("shell: bind Windows reveal callback: %w", err)
+	}
+
+	w.Init(revealScript)
 	w.Init(shellEnvironmentScript("windows", opts.TitleBar.Overlay))
 
 	hwnd := uintptr(w.Window())
@@ -107,14 +129,14 @@ func run(opts Options) error {
 	// instead, unless they're same-origin, in which case just navigate here.
 	w.Bind("__windowOpenExternal", func(rawURL string) { openLink(w, base, rawURL) })
 	w.Init(`function shellLinkHandler(e) {
-		const anchor = e.target.closest('a[target="_blank"]');
-		if (anchor && anchor.href) {
-			e.preventDefault();
-			__windowOpenExternal(anchor.href);
-		}
-	}
-	document.addEventListener('click', shellLinkHandler, true);
-	document.addEventListener('auxclick', shellLinkHandler, true);`)
+  const anchor = e.target.closest('a[target="_blank"]');
+  if (anchor && anchor.href) {
+   e.preventDefault();
+   __windowOpenExternal(anchor.href);
+  }
+ }
+ document.addEventListener('click', shellLinkHandler, true);
+ document.addEventListener('auxclick', shellLinkHandler, true);`)
 
 	if opts.TitleBar.Overlay {
 		f, err := installOverlay(w, hwnd, opts)
@@ -127,6 +149,7 @@ func run(opts Options) error {
 	}
 
 	w.Navigate(opts.URL)
+	reveal.arm(w)
 
 	stop := trackPlacement(hwnd)
 
