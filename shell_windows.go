@@ -26,6 +26,8 @@ var (
 	procMonitorFromRect    = user32.NewProc("MonitorFromRect")
 	dwmapi                 = syscall.NewLazyDLL("dwmapi.dll")
 	procSetWindowAttribute = dwmapi.NewProc("DwmSetWindowAttribute")
+	uxtheme                = syscall.NewLazyDLL("uxtheme.dll")
+	procSetWindowTheme     = uxtheme.NewProc("SetWindowTheme")
 )
 
 const (
@@ -198,8 +200,9 @@ func scaleForDPI(v int) int {
 	return int(float64(v) * float64(dpi) / 96.0)
 }
 
-// applyDarkTitleBar keeps the title bar from staying white when Windows runs
-// in dark mode.
+// applyDarkTitleBar opts the main window into dark native chrome when Windows
+// runs in dark mode. DarkMode_Explorer is best-effort but may also influence
+// native UI owned by the window, including its system menu.
 func applyDarkTitleBar(hwnd uintptr) {
 	if !darkMode() {
 		return
@@ -207,6 +210,7 @@ func applyDarkTitleBar(hwnd uintptr) {
 
 	enabled := int32(1)
 	procSetWindowAttribute.Call(hwnd, dwmwaUseImmersiveDarkMode, uintptr(unsafe.Pointer(&enabled)), unsafe.Sizeof(enabled))
+	procSetWindowTheme.Call(hwnd, uintptr(unsafe.Pointer(utf16("DarkMode_Explorer"))), 0)
 }
 
 // darkMode reports whether Windows apps are set to the dark theme.

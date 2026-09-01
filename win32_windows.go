@@ -25,6 +25,7 @@ var (
 	procGetClientRect       = user32.NewProc("GetClientRect")
 	procGetWindowRect       = user32.NewProc("GetWindowRect")
 	procClientToScreen      = user32.NewProc("ClientToScreen")
+	procGetCursorPos        = user32.NewProc("GetCursorPos")
 	procSetCapture          = user32.NewProc("SetCapture")
 	procReleaseCapture      = user32.NewProc("ReleaseCapture")
 	procTrackMouseEvent     = user32.NewProc("TrackMouseEvent")
@@ -215,6 +216,12 @@ func isWindow(hwnd uintptr) bool {
 func clientPointToScreen(hwnd, lp uintptr) point {
 	p := point{X: loWord(lp), Y: hiWord(lp)}
 	procClientToScreen.Call(hwnd, uintptr(unsafe.Pointer(&p)))
+	return p
+}
+
+func cursorPosition() point {
+	var p point
+	procGetCursorPos.Call(uintptr(unsafe.Pointer(&p)))
 	return p
 }
 

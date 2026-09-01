@@ -21,9 +21,10 @@ import (
 // WM_NCHITTEST to answer HTMAXBUTTON), the system caption glyphs and metrics, and
 // correct painting while the window is being resized.
 //
-// The overlay window is disabled because it only paints. Windows forwards input
-// for a disabled child to its parent, whose WM_NCHITTEST response can then return
-// HTMAXBUTTON and preserve the Windows 11 Snap Layouts flyout.
+// The parent frame still claims the buttons through WM_NCHITTEST so Windows 11
+// can offer Snap Layouts for HTMAXBUTTON. The overlay also handles client mouse
+// messages as a fallback for configurations where WebView2 receives the hit
+// before it reaches the parent frame.
 
 // button identifies one of the controls the shell draws.
 type button int
@@ -98,7 +99,7 @@ func newOverlay(parent uintptr, buttons []button, trailing, dark bool) (*overlay
 		0,
 		uintptr(unsafe.Pointer(overlayClass)),
 		0,
-		wsChild|wsDisabled|wsClipSiblings,
+		wsChild|wsClipSiblings,
 		0, 0, 0, 0,
 		parent,
 		0,
@@ -261,9 +262,51 @@ func (o *overlay) destroy() {
 func overlayProc(hwnd, msg, wp, lp uintptr) uintptr {
 	o := lookupOverlay(hwnd)
 
-	if o != nil && msg == wmPaint {
-		o.paint()
-		return 0
+	if o != nil {
+		f := lookupFrame(o.parent)
+
+		switch msg {
+		case wmPaint:
+			o.paint()
+			return 0
+
+		case wmMouseMove:
+			if f != nil {
+				f.hover(cursorPosition())
+				tracking := trackMouseEventStruct{
+					CbSize:    uint32(unsafe.Sizeof(trackMouseEventStruct{})),
+					DwFlags:   tmeLeave,
+					HwndTrack: hwnd,
+				}
+				procTrackMouseEvent.Call(uintptr(unsafe.Pointer(&tracking)))
+			}
+			return 0
+
+		case wmMouseLeave:
+			if f != nil && f.pressed == buttonNone {
+				f.clearHover()
+			}
+			return 0
+
+		case wmLButtonDown:
+			if f != nil && f.press(cursorPosition()) {
+				procSetCapture.Call(hwnd)
+			}
+			return 0
+
+		case wmLButtonUp:
+			if f != nil && f.release(cursorPosition()) {
+				procReleaseCapture.Call()
+			}
+			return 0
+
+		case wmCaptureChanged:
+			if f != nil && f.pressed != buttonNone {
+				f.pressed = buttonNone
+				f.clearHover()
+			}
+			return 0
+		}
 	}
 
 	r, _, _ := procDefWindowProc.Call(hwnd, msg, wp, lp)

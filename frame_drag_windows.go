@@ -11,9 +11,9 @@ import webview2 "github.com/jchv/go-webview2"
 // regions marked "--shell-window-drag: drag" — the same CSS contract as macOS —
 // and calls back into Go, which hands the gesture to Windows.
 
-// windowDragScript mirrors the macOS drag script. The pointer position is passed
-// along because a synthesized WM_NCLBUTTONDOWN needs a screen coordinate, and
-// the page's own coordinates are the only ones available at that point.
+// windowDragScript mirrors the macOS drag script. Win32 reads the cursor position
+// when handling the callback because browser screen coordinates are CSS pixels,
+// not the physical pixels expected by non-client messages and TrackPopupMenu.
 const windowDragScript = `(() => {
 	if (window.__shellWindowDragInstalled) return;
 	window.__shellWindowDragInstalled = true;
@@ -30,22 +30,20 @@ const windowDragScript = `(() => {
 			__shellWindowMaximizeToggle();
 			return;
 		}
-		__shellWindowDrag(event.screenX, event.screenY);
+		__shellWindowDrag();
 	}, true);
 
 	document.addEventListener('contextmenu', (event) => {
 		if (!isDragRegion(event.target)) return;
 		event.preventDefault();
-		__shellWindowSystemMenu(event.screenX, event.screenY);
+		__shellWindowSystemMenu();
 	}, true);
 })();`
 
-// bindWindowDrag exposes the callbacks windowDragScript uses. MouseEvent's
-// screenX/screenY are already in physical screen pixels for a WebView2 window at
-// the shell's per-monitor-v2 DPI awareness, so they can be used as-is.
+// bindWindowDrag exposes the callbacks windowDragScript uses.
 func bindWindowDrag(w webview2.WebView, hwnd uintptr) {
-	w.Bind("__shellWindowDrag", func(x, y float64) {
-		beginWindowDrag(hwnd, point{X: int32(x), Y: int32(y)})
+	w.Bind("__shellWindowDrag", func() {
+		beginWindowDrag(hwnd, cursorPosition())
 	})
 
 	w.Bind("__shellWindowMaximizeToggle", func() {
@@ -58,8 +56,8 @@ func bindWindowDrag(w webview2.WebView, hwnd uintptr) {
 		procPostMessage.Call(hwnd, wmSysCommand, cmd, 0)
 	})
 
-	w.Bind("__shellWindowSystemMenu", func(x, y float64) {
-		showSystemMenu(hwnd, point{X: int32(x), Y: int32(y)})
+	w.Bind("__shellWindowSystemMenu", func() {
+		showSystemMenu(hwnd, cursorPosition())
 	})
 
 	w.Init(windowDragScript)
