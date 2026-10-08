@@ -18,6 +18,7 @@ package shell
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"errors"
@@ -200,15 +201,19 @@ func token() (string, error) {
 // with the cookie set. HttpOnly keeps it from scripts; SameSite=Strict keeps
 // browsers from attaching it to cross-site requests.
 func protect(secret string, next http.Handler) http.Handler {
+	// Cookie identity does not include the port, so shared WebView profiles
+	// need a per-run name. Hashing keeps the bearer token out of the name.
+	cookieName := fmt.Sprintf("shell_session_%x", sha256.Sum256([]byte(secret)))
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if cookie, err := r.Cookie("shell_session"); err == nil && equal(cookie.Value, secret) {
+		if cookie, err := r.Cookie(cookieName); err == nil && equal(cookie.Value, secret) {
 			next.ServeHTTP(w, r)
 			return
 		}
 
 		if query := r.URL.Query(); equal(query.Get("shell_token"), secret) {
 			http.SetCookie(w, &http.Cookie{
-				Name:  "shell_session",
+				Name:  cookieName,
 				Value: secret,
 
 				Path:     "/",
