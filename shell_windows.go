@@ -54,7 +54,10 @@ func run(opts Options) error {
 		dataPath = filepath.Join(dir, opts.Title)
 	}
 
-	base, _ := url.Parse(opts.URL)
+	base, err := url.Parse(opts.URL)
+	if err != nil {
+		return fmt.Errorf("shell: invalid URL: %w", err)
+	}
 
 	// Cloaked until the page has something to show; see cloak_windows.go.
 	unhook := cloakNextWindow()
@@ -126,19 +129,11 @@ func run(opts Options) error {
 		restorePlacement(hwnd, placementPath)
 	}
 
-	// WebView2 opens target="_blank" links (and middle-clicks on them) in a
-	// bare popup window by default; route them to the default browser
-	// instead, unless they're same-origin, in which case just navigate here.
-	w.Bind("__windowOpenExternal", func(rawURL string) { openLink(w, base, rawURL) })
-	w.Init(`function shellLinkHandler(e) {
-  const anchor = e.target.closest('a[target="_blank"]');
-  if (anchor && anchor.href) {
-   e.preventDefault();
-   __windowOpenExternal(anchor.href);
-  }
- }
- document.addEventListener('click', shellLinkHandler, true);
- document.addEventListener('auxclick', shellLinkHandler, true);`)
+	stopNavigation, err := installNavigationPolicy(w, base)
+	if err != nil {
+		return fmt.Errorf("shell: configure Windows navigation: %w", err)
+	}
+	defer stopNavigation()
 
 	if opts.TitleBar.Overlay {
 		f, err := installOverlay(w, hwnd, opts)
@@ -172,22 +167,14 @@ func run(opts Options) error {
 	return nil
 }
 
-func openLink(w webview2.WebView, base *url.URL, rawURL string) {
-	u, err := url.Parse(rawURL)
-
-	if err != nil {
-		return
-	}
-
-	if base != nil && u.Scheme == base.Scheme && u.Host == base.Host {
-		w.Navigate(rawURL)
-		return
-	}
-
+func openExternalURL(rawURL string) {
 	// Not restricted to http(s): mirrors the macOS shell's NSWorkspace
 	// openURL, which hands any scheme (mailto:, etc.) to its registered
 	// handler rather than silently dropping it.
-	exec.Command("rundll32", "url.dll,FileProtocolHandler", rawURL).Start()
+	cmd := exec.Command("rundll32", "url.dll,FileProtocolHandler", rawURL)
+	if cmd.Start() == nil {
+		go cmd.Wait()
+	}
 }
 
 func scaleForDPI(v int) int {

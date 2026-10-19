@@ -49,9 +49,10 @@ const (
 )
 
 type comObject struct {
-	vtbl *[32]uintptr
+	vtbl *[64]uintptr
 }
 
+//go:uintptrescapes
 func (o *comObject) call(slot int, args ...uintptr) uintptr {
 	r, _, _ := syscall.SyscallN(o.vtbl[slot], append([]uintptr{uintptr(unsafe.Pointer(o))}, args...)...)
 	return r

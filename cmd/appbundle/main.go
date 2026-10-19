@@ -15,6 +15,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/xml"
 	"flag"
 	"fmt"
 	"image"
@@ -181,7 +183,7 @@ func plist(name, id, version, minos, copyright string) []byte {
 	if copyright != "" {
 		optional = fmt.Sprintf(`        <key>NSHumanReadableCopyright</key>
         <string>%s</string>
-`, copyright)
+`, xmlText(copyright))
 	}
 
 	return fmt.Appendf(nil, `<?xml version="1.0" encoding="UTF-8"?>
@@ -216,7 +218,13 @@ func plist(name, id, version, minos, copyright string) []byte {
         </dict>
     </dict>
 </plist>
-`, name, id, version, minos, optional)
+`, xmlText(name), xmlText(id), xmlText(version), xmlText(minos), optional)
+}
+
+func xmlText(value string) string {
+	var escaped bytes.Buffer
+	xml.EscapeText(&escaped, []byte(value))
+	return escaped.String()
 }
 
 func loadIcon(path string) image.Image {
