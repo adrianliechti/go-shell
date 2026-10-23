@@ -539,6 +539,15 @@ void ShellRun(
         NSWindowStyleMask style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
                                   NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable;
 
+        // Request the full-size content view up front: AppKit keeps the content
+        // size when the style mask changes later, so adding it after the frame
+        // autosave restored the window would shrink it by the title-bar height
+        // on every launch, and the deferred title-bar relayout would reset the
+        // window controls moved by ControlsOffsetX/Y.
+        if (titleBarOverlay) {
+            style |= NSWindowStyleMaskFullSizeContentView;
+        }
+
         NSWindow *window = [[NSWindow alloc] initWithContentRect:frame
                                                        styleMask:style
                                                          backing:NSBackingStoreBuffered
