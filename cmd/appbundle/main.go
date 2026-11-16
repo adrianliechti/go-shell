@@ -39,6 +39,7 @@ func main() {
 	description := flag.String("description", "", "file description shown by Windows (default: the app name)")
 	company := flag.String("company", "", "company name shown by Windows")
 	copyright := flag.String("copyright", "", "human-readable copyright shown by macOS")
+	microphone := flag.String("microphone", "", "reason shown when the app first uses the microphone; required on macOS for Options.Microphone")
 	icon := flag.String("icon", "", "app icon png, ideally 1024x1024 (default <package>/appicon.png)")
 	out := flag.String("out", "", "output directory (default <package>/build/bin)")
 	goos := flag.String("os", runtime.GOOS, "target platform: darwin or windows")
@@ -76,7 +77,7 @@ func main() {
 			*arch = "arm64"
 		}
 
-		bundleDarwin(*name, *id, *pkg, *version, *copyright, *out, *arch, *minos, img)
+		bundleDarwin(*name, *id, *pkg, *version, *copyright, *microphone, *out, *arch, *minos, img)
 
 	case "windows":
 		if *arch == "" {
@@ -90,7 +91,7 @@ func main() {
 	}
 }
 
-func bundleDarwin(name, id, pkg, version, copyright, out, arch, minos string, icon image.Image) {
+func bundleDarwin(name, id, pkg, version, copyright, microphone, out, arch, minos string, icon image.Image) {
 	app := filepath.Join(out, name+".app")
 	contents := filepath.Join(app, "Contents")
 
@@ -125,7 +126,7 @@ func bundleDarwin(name, id, pkg, version, copyright, out, arch, minos string, ic
 	}
 	runEnv(buildEnv, "go", "build", "-trimpath", "-ldflags=-s -w", "-o", filepath.Join(contents, "MacOS", name), pkgPath(pkg))
 
-	if err := os.WriteFile(filepath.Join(contents, "Info.plist"), plist(name, id, version, minos, copyright), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(contents, "Info.plist"), plist(name, id, version, minos, copyright, microphone), 0o644); err != nil {
 		log.Fatal(err)
 	}
 
@@ -177,13 +178,19 @@ func buildWindows(name, pkg, description, company, out, arch string, icon image.
 	log.Printf("built %s", exe)
 }
 
-func plist(name, id, version, minos, copyright string) []byte {
+func plist(name, id, version, minos, copyright, microphone string) []byte {
 	optional := ""
 
 	if copyright != "" {
-		optional = fmt.Sprintf(`        <key>NSHumanReadableCopyright</key>
+		optional += fmt.Sprintf(`        <key>NSHumanReadableCopyright</key>
         <string>%s</string>
 `, xmlText(copyright))
+	}
+
+	if microphone != "" {
+		optional += fmt.Sprintf(`        <key>NSMicrophoneUsageDescription</key>
+        <string>%s</string>
+`, xmlText(microphone))
 	}
 
 	return fmt.Appendf(nil, `<?xml version="1.0" encoding="UTF-8"?>

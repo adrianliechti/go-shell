@@ -6,7 +6,11 @@ import (
 )
 
 func TestPlistMetadataRoundTrip(t *testing.T) {
-	for _, copyright := range []string{"", `© A & B <company> "2026"`} {
+	for _, optional := range []struct{ copyright, microphone string }{
+		{},
+		{`© A & B <company> "2026"`, `Dictate <prompts> & "notes"`},
+	} {
+		copyright, microphone := optional.copyright, optional.microphone
 		t.Run(copyright, func(t *testing.T) {
 			name := `Research & Notes <desktop> "edition"`
 			id, version, minos := "com.example.a&b", "1.0<2", "12.0&later"
@@ -18,7 +22,7 @@ func TestPlistMetadataRoundTrip(t *testing.T) {
 					} `xml:",any"`
 				} `xml:"dict"`
 			}
-			if err := xml.Unmarshal(plist(name, id, version, minos, copyright), &decoded); err != nil {
+			if err := xml.Unmarshal(plist(name, id, version, minos, copyright, microphone), &decoded); err != nil {
 				t.Fatalf("invalid plist XML: %v", err)
 			}
 			values := make(map[string]string)
@@ -47,6 +51,10 @@ func TestPlistMetadataRoundTrip(t *testing.T) {
 			got, present := values["NSHumanReadableCopyright"]
 			if got != copyright || present != (copyright != "") {
 				t.Errorf("copyright = %q (present %t), want %q", got, present, copyright)
+			}
+			got, present = values["NSMicrophoneUsageDescription"]
+			if got != microphone || present != (microphone != "") {
+				t.Errorf("microphone = %q (present %t), want %q", got, present, microphone)
 			}
 		})
 	}

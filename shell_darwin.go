@@ -6,7 +6,7 @@ package shell
 #include <stdlib.h>
 #include <stdint.h>
 
-void ShellRun(const char *url, const char *title, int width, int height, int minWidth, int minHeight, int debug, int titleBarOverlay, int titleBarHeight, int controlsOffsetX, int controlsOffsetY, const char *shellEnvironment, const char *fileMenu, uintptr_t shutdownContext);
+void ShellRun(const char *url, const char *title, int width, int height, int minWidth, int minHeight, int debug, int microphone, int titleBarOverlay, int titleBarHeight, int controlsOffsetX, int controlsOffsetY, const char *shellEnvironment, const char *fileMenu, uintptr_t shutdownContext);
 void ShellPickFolder(const char *title, uintptr_t ctx);
 */
 import "C"
@@ -28,6 +28,10 @@ func run(opts Options) error {
 
 	if opts.Debug {
 		debug = 1
+	}
+	microphone := C.int(0)
+	if opts.Microphone {
+		microphone = 1
 	}
 	overlay := C.int(0)
 	if opts.TitleBar.Overlay {
@@ -58,6 +62,7 @@ func run(opts Options) error {
 		C.int(opts.MinWidth),
 		C.int(opts.MinHeight),
 		debug,
+		microphone,
 		overlay,
 		C.int(opts.TitleBar.Height),
 		C.int(opts.TitleBar.ControlsOffsetX),

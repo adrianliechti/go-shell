@@ -164,6 +164,8 @@ go tool appbundle -name App -id com.example.app -description "..." -company "...
 
 - On macOS it assembles `App.app`: binary, generated Info.plist, `icon.icns`
   rendered from the PNG, ad-hoc code signature.
+- `-microphone "reason"` adds the macOS microphone usage description an app
+  needs before it sets `Options.Microphone`; without it macOS denies capture.
 - On Windows (or with `-os windows`) it builds `App.exe` (windowsgui): a
   resource object — icon (`RT_GROUP_ICON` `#1`, used by the window),
   per-monitor-v2 DPI manifest, version info — is generated next to the main

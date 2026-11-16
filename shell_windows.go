@@ -135,6 +135,12 @@ func run(opts Options) error {
 	}
 	defer stopNavigation()
 
+	stopPermissions, err := installPermissionPolicy(w, base, opts.Microphone)
+	if err != nil {
+		return fmt.Errorf("shell: configure Windows permissions: %w", err)
+	}
+	defer stopPermissions()
+
 	if opts.TitleBar.Overlay {
 		f, err := installOverlay(w, hwnd, opts)
 

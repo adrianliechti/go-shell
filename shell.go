@@ -61,6 +61,12 @@ type Options struct {
 	// Debug enables the web inspector (macOS) / devtools (Windows).
 	Debug bool
 
+	// Microphone lets pages from the app's own origin capture audio with
+	// getUserMedia. Without it, and for cameras and other origins, media
+	// capture is denied. macOS bundles also need a usage description, which
+	// appbundle adds with -microphone.
+	Microphone bool
+
 	// TitleBar controls native title-bar presentation. Overlay mode lets web
 	// content occupy the title-bar area and enables regions marked with the CSS
 	// custom property "--shell-window-drag: drag" to move the window. The window

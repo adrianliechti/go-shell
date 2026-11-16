@@ -17,6 +17,7 @@ void ShellPublishTitleBarMetrics(NSWindow *window, WKWebView *webView, NSInteger
 @property(strong) NSURL *baseURL;
 @property(strong) NSMapTable<WKDownload *, NSURL *> *downloads;
 @property BOOL titleBarOverlay;
+@property BOOL microphone;
 @property NSInteger titleBarHeight;
 @property NSInteger controlsOffsetX;
 @property NSInteger controlsOffsetY;
@@ -332,6 +333,21 @@ void ShellPublishTitleBarMetrics(NSWindow *window, WKWebView *webView, NSInteger
     }];
 }
 
+// getUserMedia: only the app's own top-level page may use the microphone, and
+// only when the app opted in; WebKit would otherwise prompt for any request.
+- (void)webView:(WKWebView *)webView
+    requestMediaCapturePermissionForOrigin:(WKSecurityOrigin *)origin
+                          initiatedByFrame:(WKFrameInfo *)frame
+                                      type:(WKMediaCaptureType)type
+                           decisionHandler:(void (^)(WKPermissionDecision decision))decisionHandler API_AVAILABLE(macos(12.0)) {
+    NSInteger port = self.baseURL.port ? self.baseURL.port.integerValue : 0;
+    BOOL appOrigin = [origin.protocol isEqualToString:self.baseURL.scheme] &&
+                     [origin.host isEqualToString:self.baseURL.host] &&
+                     origin.port == port;
+    BOOL allowed = self.microphone && type == WKMediaCaptureTypeMicrophone && frame.isMainFrame && appOrigin;
+    decisionHandler(allowed ? WKPermissionDecisionGrant : WKPermissionDecisionDeny);
+}
+
 // <input type="file">
 - (void)webView:(WKWebView *)webView
     runOpenPanelWithParameters:(WKOpenPanelParameters *)parameters
@@ -521,6 +537,7 @@ void ShellRun(
     int minWidth,
     int minHeight,
     int debug,
+    int microphone,
     int titleBarOverlay,
     int titleBarHeight,
     int controlsOffsetX,
@@ -597,6 +614,7 @@ void ShellRun(
         delegate.baseURL = [NSURL URLWithString:[NSString stringWithUTF8String:url]];
         delegate.downloads = [NSMapTable weakToStrongObjectsMapTable];
         delegate.titleBarOverlay = titleBarOverlay ? YES : NO;
+        delegate.microphone = microphone ? YES : NO;
         delegate.titleBarHeight = titleBarHeight;
         delegate.controlsOffsetX = controlsOffsetX;
         delegate.controlsOffsetY = controlsOffsetY;
