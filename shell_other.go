@@ -11,3 +11,7 @@ func run(Options) error {
 func pickFolder(string) (string, error) {
 	return "", errors.ErrUnsupported
 }
+
+func newWindow(map[string]string) error {
+	return errors.ErrUnsupported
+}

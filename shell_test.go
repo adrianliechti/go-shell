@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -177,5 +178,94 @@ func TestProtectSharedCookieStore(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("other instance's cookie: got %d, want 401", resp.StatusCode)
+	}
+}
+
+func TestWindowURLAddsParamsToTheStartAddress(t *testing.T) {
+	got, err := windowURL("http://127.0.0.1:1234/?shell_token=secret", map[string]string{"project": "/tmp/a b", "chat": "1"})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	u, err := url.Parse(got)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	query := u.Query()
+
+	if u.Host != "127.0.0.1:1234" || u.Path != "/" || query.Get("shell_token") != "secret" || query.Get("project") != "/tmp/a b" || query.Get("chat") != "1" {
+		t.Fatalf("window URL = %s", got)
+	}
+}
+
+func TestWindowURLKeepsTheStartAddressWithoutParams(t *testing.T) {
+	const start = "http://localhost:5173/app/?mode=dev"
+
+	if got, err := windowURL(start, nil); err != nil || got != start {
+		t.Fatalf("window URL = %q, %v", got, err)
+	}
+}
+
+func TestWindowURLPreservesUnchangedQueryFields(t *testing.T) {
+	const start = "http://localhost/app?theme=blue;red&tag=a%20b&tag=c&flag&%64oc=old&doc=older#page"
+	const want = "http://localhost/app?theme=blue;red&tag=a%20b&tag=c&flag&doc=new%2Ffile#page"
+	got, err := windowURL(start, map[string]string{"doc": "new/file"})
+	if err != nil || got != want {
+		t.Fatalf("window URL = %q, %v; want %q", got, err, want)
+	}
+}
+
+func TestWindowURLRefusesTheToken(t *testing.T) {
+	if _, err := windowURL("http://127.0.0.1:1/?shell_token=a", map[string]string{"shell_token": "b"}); err == nil {
+		t.Fatal("a window param replaced the session token")
+	}
+}
+
+func TestNewWindowNeedsTheShellRunning(t *testing.T) {
+	if err := NewWindow(nil); err == nil {
+		t.Fatal("NewWindow opened a window before Run")
+	}
+}
+
+func TestProtectKeepsTheParamsOfANewWindow(t *testing.T) {
+	secret, err := token()
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	handler := protect(secret, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, httptest.NewRequest("GET", "/?shell_token="+secret, nil))
+	cookies := first.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatal("first window did not receive a session cookie")
+	}
+
+	address, err := windowURL("http://127.0.0.1:1/?shell_token="+secret, map[string]string{"project": "/tmp/a"})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	u, err := url.Parse(address)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, cookie := range []*http.Cookie{nil, cookies[0]} {
+		req := httptest.NewRequest("GET", u.RequestURI(), nil)
+		if cookie != nil {
+			req.AddCookie(cookie)
+		}
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if location := rec.Header().Get("Location"); rec.Code != http.StatusSeeOther || location != "/?project=%2Ftmp%2Fa" {
+			t.Errorf("existing cookie %t: got %d to %q, want 303 to the window's params", cookie != nil, rec.Code, location)
+		}
 	}
 }

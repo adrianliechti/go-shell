@@ -7,6 +7,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -56,6 +57,20 @@ func main() {
 		json.NewEncoder(w).Encode(files)
 	})
 
+	// Opens another window of the example; the page reads the params from its URL.
+	mux.HandleFunc("POST /api/window", func(w http.ResponseWriter, r *http.Request) {
+		if err := shell.NewWindow(map[string]string{"opened": time.Now().Format(time.TimeOnly)}); err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, errors.ErrUnsupported) {
+				status = http.StatusNotImplemented
+			}
+			http.Error(w, err.Error(), status)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	})
+
 	mux.HandleFunc("POST /api/folder", func(w http.ResponseWriter, r *http.Request) {
 		path, err := shell.PickFolder("Choose a folder")
 
@@ -78,6 +93,10 @@ func main() {
 		MinWidth:  480,
 		MinHeight: 360,
 
+		FileMenu: []shell.MenuItem{
+			{Title: "New Window", Command: "new-window", Key: "n", Shift: true},
+		},
+
 		Debug: os.Getenv("SHELL_DEBUG") != "",
 	})
 
@@ -85,7 +104,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Run returns when the window closes — cleanup (closing connections,
+	// Run returns when the last window closes — cleanup (closing connections,
 	// flushing state, ...) belongs here.
 	log.Println("window closed, shutting down")
 }
@@ -141,6 +160,12 @@ const page = `<!doctype html>
   <output id="folderOut">The backend opens the dialog and receives the path.</output>
 </section>
 
+<section id="windowsDemo" hidden>
+  <h2>Windows</h2>
+  <button onclick="newWindow()">shell.NewWindow()</button>
+  <output id="windowOut"></output>
+</section>
+
 <section>
   <h2>Downloads</h2>
   <button onclick="location.href='/download.csv'">Server download (Content-Disposition)</button>
@@ -177,6 +202,20 @@ const page = `<!doctype html>
     const response = await fetch('/api/folder', { method: 'POST' });
     const result = await response.json();
     folderOut.value = result.path ? 'picked: ' + result.path : 'cancelled';
+  }
+
+  if (window.shell?.platform === 'macos') {
+    windowsDemo.hidden = false;
+    const opened = new URLSearchParams(location.search).get('opened');
+    windowOut.value = opened ? 'opened at ' + opened + ' by another window' : 'File › New Window (Shift+Cmd+N) works too.';
+    window.addEventListener('shell:command', (event) => {
+      if (event.detail === 'new-window') newWindow();
+    });
+  }
+
+  async function newWindow() {
+    const response = await fetch('/api/window', { method: 'POST' });
+    if (!response.ok) windowOut.value = await response.text();
   }
 
   async function fetchTime() {

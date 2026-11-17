@@ -1,6 +1,6 @@
 # go-shell
 
-A minimal desktop shell for local web apps: one native window hosting the
+A minimal desktop shell for local web apps. Each native window hosts the
 platform web view — WKWebView on macOS, WebView2 on Windows 11. No JavaScript
 bridge, no framework; the hosted app talks to its backend over plain HTTP and
 WebSocket. Links leaving the app's origin open in the default browser.
@@ -44,10 +44,10 @@ func main() {
 ```
 
 `shell.Run` must be called from the main goroutine (the native event loop
-runs on the main thread) and blocks until the window closes.
+runs on the main thread) and blocks until the last window closes.
 
-`OnShutdown`, when set, runs exactly once after the user closes the window or
-quits the app and before `Run` returns. On macOS, the native event loop remains
+`OnShutdown`, when set, runs exactly once after the user closes the last window
+or quits the app and before `Run` returns. On macOS, the native event loop remains
 responsive while the callback runs, so bounded backend cleanup does not make
 the app appear hung while it is quitting.
 
@@ -67,6 +67,20 @@ from a request handler (never from the main goroutine):
 ```go
 path, err := shell.PickFolder("Open Workspace") // "" if cancelled
 ```
+
+Call `NewWindow` from a request handler to open another window at the app's
+original address. Supplied parameters replace matching query keys and the page
+can read them from `location.search`. The shell reserves `shell_token`.
+
+```go
+err := shell.NewWindow(map[string]string{"document": "notes.md"})
+```
+
+On macOS, `NewWindow` returns when the native window opens, or returns an error
+if the app is shutting down. All windows share the app's handler and session.
+The app quits when the last window closes. Each window takes its page's
+`<title>` for the Window menu. On Windows, `NewWindow` returns
+`errors.ErrUnsupported`.
 
 `TitleBar.Overlay` lets the page draw where the title bar would be, so a tab
 strip or toolbar can sit in the window chrome itself. Mark drag regions in CSS

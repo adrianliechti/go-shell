@@ -358,3 +358,8 @@ func fatalDialog(title, message string) {
 
 	procMessageBoxW.Call(0, uintptr(unsafe.Pointer(m)), uintptr(unsafe.Pointer(t)), mbIconError)
 }
+
+// newWindow is not supported yet: the Windows shell keeps a single window.
+func newWindow(map[string]string) error {
+	return errors.ErrUnsupported
+}
